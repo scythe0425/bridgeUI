@@ -35,7 +35,17 @@
 
 ```bash
 cd backend
+
+# 최초 1회: 가상환경 생성
+python3 -m venv .venv
+
+# 가상환경 활성화 (매번 서버 실행 전)
+source .venv/bin/activate
+
+# 최초 1회: 의존성 설치
 pip install -r requirements.txt
+
+# 서버 실행
 uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
