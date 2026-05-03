@@ -86,7 +86,12 @@ class MainActivity : FlutterActivity() {
         val height = metrics.heightPixels
         val density = metrics.densityDpi
 
+        val handler = Handler(Looper.getMainLooper())
         val imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+
+        // Android 14+(API 34+) 요구사항: createVirtualDisplay 전에 콜백 등록 필수
+        mediaProjection!!.registerCallback(object : MediaProjection.Callback() {}, handler)
+
         val virtualDisplay = mediaProjection!!.createVirtualDisplay(
             "bridgeUI_capture",
             width, height, density,
@@ -95,7 +100,7 @@ class MainActivity : FlutterActivity() {
         )
 
         // 디스플레이가 렌더링될 시간을 확보한 뒤 프레임 캡처
-        Handler(Looper.getMainLooper()).postDelayed({
+        handler.postDelayed({
             val image = imageReader.acquireLatestImage()
             if (image != null) {
                 val plane = image.planes[0]
@@ -113,14 +118,14 @@ class MainActivity : FlutterActivity() {
                     .compress(Bitmap.CompressFormat.PNG, 90, stream)
                 lastCaptureBytes = stream.toByteArray()
 
-                virtualDisplay.release()
+                virtualDisplay?.release()
                 mediaProjection?.stop()
                 mediaProjection = null
                 stopForegroundService()
 
                 pendingResult?.success(lastCaptureBytes)
             } else {
-                virtualDisplay.release()
+                virtualDisplay?.release()
                 mediaProjection?.stop()
                 mediaProjection = null
                 stopForegroundService()
