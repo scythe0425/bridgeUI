@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'capture/capture_service.dart';
-import 'capture/ui_scanner.dart';
+import 'capture/extracted_element.dart';
 import 'overlay/freeze_overlay.dart';
 import 'overlay/trigger_button.dart';
 
@@ -52,8 +52,8 @@ class _BridgeUIHomeState extends State<BridgeUIHome> {
     }
   }
 
-  // 탭 결과는 FreezeOverlay 내부에서 하이라이트 처리. 추후 #5에서 백엔드 전송 연결.
-  void _onElementTapped(ScanResult result) {}
+  // 추출된 요소는 #6(백엔드 연동) 단계에서 파이프라인으로 전달 예정.
+  void _onElementExtracted(ExtractedElement element) {}
 
   void _onDismiss() {
     setState(() {
@@ -67,7 +67,7 @@ class _BridgeUIHomeState extends State<BridgeUIHome> {
     if (_frozenScreen != null) {
       return FreezeOverlay(
         imageBytes: _frozenScreen!,
-        onElementTapped: _onElementTapped,
+        onElementExtracted: _onElementExtracted,
         onDismiss: _onDismiss,
       );
     }
