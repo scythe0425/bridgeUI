@@ -10,6 +10,7 @@ import android.hardware.display.DisplayManager
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.DisplayMetrics
@@ -39,6 +40,7 @@ class MainActivity : FlutterActivity() {
             when (call.method) {
                 "requestCapturePermission" -> {
                     pendingResult = result
+                    startForegroundServiceIfNeeded()
                     @Suppress("DEPRECATION")
                     startActivityForResult(
                         projectionManager!!.createScreenCaptureIntent(),
@@ -48,6 +50,14 @@ class MainActivity : FlutterActivity() {
                 "getLastCapture" -> result.success(lastCaptureBytes)
                 else -> result.notImplemented()
             }
+        }
+    }
+
+    /// Android 14(API 34)부터 MediaProjection 전에 포그라운드 서비스 필수.
+    private fun startForegroundServiceIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val intent = Intent(this, MediaProjectionForegroundService::class.java)
+            startForegroundService(intent)
         }
     }
 
@@ -61,6 +71,7 @@ class MainActivity : FlutterActivity() {
             mediaProjection = projectionManager!!.getMediaProjection(resultCode, data)
             captureScreen()
         } else {
+            stopForegroundService()
             pendingResult?.error("PERMISSION_DENIED", "화면 캡처 권한이 거부되었습니다", null)
             pendingResult = null
         }
@@ -105,15 +116,23 @@ class MainActivity : FlutterActivity() {
                 virtualDisplay.release()
                 mediaProjection?.stop()
                 mediaProjection = null
+                stopForegroundService()
 
                 pendingResult?.success(lastCaptureBytes)
             } else {
                 virtualDisplay.release()
                 mediaProjection?.stop()
                 mediaProjection = null
+                stopForegroundService()
                 pendingResult?.error("CAPTURE_FAILED", "화면 캡처에 실패했습니다", null)
             }
             pendingResult = null
         }, 300L)
+    }
+
+    private fun stopForegroundService() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            stopService(Intent(this, MediaProjectionForegroundService::class.java))
+        }
     }
 }

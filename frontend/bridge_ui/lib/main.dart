@@ -1,9 +1,14 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'capture/capture_sender.dart';
 import 'capture/capture_service.dart';
 import 'capture/extracted_element.dart';
 import 'overlay/freeze_overlay.dart';
 import 'overlay/trigger_button.dart';
+
+/// 개발 중 서버 주소. 실기기에서는 PC의 실제 IP를 입력하세요.
+/// 예: 'http://192.168.x.x:8000'
+const _serverUrl = 'http://10.0.2.2:8000'; // 에뮬레이터 기본값
 
 void main() {
   runApp(const BridgeUIApp());
@@ -38,6 +43,7 @@ class BridgeUIHome extends StatefulWidget {
 
 class _BridgeUIHomeState extends State<BridgeUIHome> {
   final _captureService = CaptureService();
+  final _sender = CaptureSender(serverUrl: _serverUrl);
 
   String _statusMessage = '버튼을 눌러 화면을 분석하세요';
   Uint8List? _frozenScreen;
@@ -52,8 +58,13 @@ class _BridgeUIHomeState extends State<BridgeUIHome> {
     }
   }
 
-  // 추출된 요소는 #6(백엔드 연동) 단계에서 파이프라인으로 전달 예정.
-  void _onElementExtracted(ExtractedElement element) {}
+  Future<void> _onElementExtracted(ExtractedElement element) async {
+    try {
+      await _sender.send(element);
+    } catch (_) {
+      // 전송 실패는 UI를 방해하지 않도록 조용히 처리
+    }
+  }
 
   void _onDismiss() {
     setState(() {
