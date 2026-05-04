@@ -1,31 +1,70 @@
 import base64
-import io
+import uuid
 from datetime import datetime
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import HTMLResponse
 
-app = FastAPI(title="bridgeUI Capture Viewer")
+from db.chroma_store import get_collection
+from pipeline.embedder import embed_image, warmup
+
 
 _latest_image_b64: str | None = None
 _captured_at: str | None = None
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """서버 시작 시 ChromaDB 컬렉션과 CLIP 모델을 미리 로드합니다."""
+    get_collection()
+    warmup()  # CLIP 모델 미리 로드
+    yield
+
+
+app = FastAPI(title="bridgeUI Capture Viewer", lifespan=lifespan)
+
+
 @app.post("/capture")
 async def receive_capture(file: UploadFile = File(...)) -> dict:
-    """Flutter 앱에서 전송된 크롭 이미지를 수신합니다.
+    """Flutter 앱에서 전송된 크롭 이미지를 수신하고 ChromaDB에 저장합니다.
 
     Args:
         file: 크롭된 UI 요소의 PNG 파일.
 
     Returns:
-        수신 성공 여부와 타임스탬프를 담은 딕셔너리.
+        수신 성공 여부, 타임스탬프, DB에 저장된 항목 수를 담은 딕셔너리.
     """
     global _latest_image_b64, _captured_at
+
     data = await file.read()
     _latest_image_b64 = base64.b64encode(data).decode()
     _captured_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    return {"status": "ok", "captured_at": _captured_at}
+
+    try:
+        vector = embed_image(data)
+        collection = get_collection()
+        doc_id = str(uuid.uuid4())
+        collection.add(
+            ids=[doc_id],
+            embeddings=[vector],
+            metadatas=[{"captured_at": _captured_at, "filename": file.filename or "capture.png"}],
+        )
+        count = collection.count()
+    except Exception as e:
+        return {"status": "ok", "captured_at": _captured_at, "db": "error", "detail": str(e)}
+
+    return {"status": "ok", "captured_at": _captured_at, "db": "stored", "total": count}
+
+
+@app.get("/db/count")
+async def db_count() -> dict:
+    """ChromaDB에 저장된 이미지 수를 반환합니다.
+
+    Returns:
+        저장된 항목 수.
+    """
+    return {"total": get_collection().count()}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -41,8 +80,9 @@ async def viewer() -> str:
         if _latest_image_b64
         else '<p style="color:#5F6368;font-size:20px;">아직 수신된 캡처가 없습니다.</p>'
     )
-    time_html = (
-        f'<p style="color:#5F6368;font-size:14px;">마지막 수신: {_captured_at}</p>'
+    count_html = (
+        f'<p style="color:#5F6368;font-size:14px;">마지막 수신: {_captured_at} '
+        f'| DB 저장 수: <b>{get_collection().count()}</b>개</p>'
         if _captured_at
         else ""
     )
@@ -61,7 +101,7 @@ async def viewer() -> str:
 </head>
 <body>
   <h1>bridgeUI 캡처 뷰어</h1>
-  {time_html}
+  {count_html}
   {img_html}
 </body>
 </html>"""
