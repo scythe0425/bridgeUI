@@ -83,6 +83,16 @@ class _FreezeOverlayState extends State<FreezeOverlay> {
     setState(() => _cropRect = next);
   }
 
+  /// 크롭 사각형 전체를 드래그 방향으로 이동합니다 (화면 밖으로 나가지 않도록 클램핑).
+  void _moveCropRect(DragUpdateDetails d) {
+    if (_cropRect == null) return;
+    final size = MediaQuery.of(context).size;
+    final r = _cropRect!;
+    final l = (r.left + d.delta.dx).clamp(0.0, size.width - r.width);
+    final t = (r.top + d.delta.dy).clamp(0.0, size.height - r.height);
+    setState(() => _cropRect = Rect.fromLTWH(l, t, r.width, r.height));
+  }
+
   Future<void> _confirmCrop() async {
     if (_cropRect == null || _isExtracting) return;
     setState(() => _isExtracting = true);
@@ -131,6 +141,16 @@ class _FreezeOverlayState extends State<FreezeOverlay> {
             _DimOverlay(rect: _cropRect!),
             // 파란 테두리
             _CropBorder(rect: _cropRect!),
+            // 크롭 영역 이동 (내부 드래그) — 모서리 핸들보다 먼저 선언해 z-order 상 아래에 위치
+            Positioned(
+              left: _cropRect!.left,
+              top: _cropRect!.top,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onPanUpdate: _moveCropRect,
+                child: SizedBox(width: _cropRect!.width, height: _cropRect!.height),
+              ),
+            ),
             // 모서리 핸들
             for (final corner in ['tl', 'tr', 'bl', 'br'])
               _CornerHandle(
