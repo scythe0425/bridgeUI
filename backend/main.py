@@ -8,10 +8,12 @@ from fastapi.responses import HTMLResponse
 
 from db.chroma_store import get_collection
 from pipeline.embedder import embed_image, warmup
+from pipeline.ui_detector import detect_ui_element
 
 
 _latest_image_b64: str | None = None
 _captured_at: str | None = None
+_latest_detection: dict | None = None
 
 
 @asynccontextmanager
@@ -35,26 +37,41 @@ async def receive_capture(file: UploadFile = File(...)) -> dict:
     Returns:
         수신 성공 여부, 타임스탬프, DB에 저장된 항목 수를 담은 딕셔너리.
     """
-    global _latest_image_b64, _captured_at
+    global _latest_image_b64, _captured_at, _latest_detection
 
     data = await file.read()
     _latest_image_b64 = base64.b64encode(data).decode()
     _captured_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     try:
+        detection = detect_ui_element(data)
+        _latest_detection = detection
         vector = embed_image(data)
         collection = get_collection()
         doc_id = str(uuid.uuid4())
         collection.add(
             ids=[doc_id],
             embeddings=[vector],
-            metadatas=[{"captured_at": _captured_at, "filename": file.filename or "capture.png"}],
+            metadatas=[{
+                "captured_at": _captured_at,
+                "filename": file.filename or "capture.png",
+                "element_type": detection["element_type"],
+                "confidence": detection["confidence"],
+            }],
         )
         count = collection.count()
     except Exception as e:
         return {"status": "ok", "captured_at": _captured_at, "db": "error", "detail": str(e)}
 
-    return {"status": "ok", "captured_at": _captured_at, "db": "stored", "total": count}
+    return {
+        "status": "ok",
+        "captured_at": _captured_at,
+        "db": "stored",
+        "total": count,
+        "element_type": detection["element_type"],
+        "confidence": detection["confidence"],
+        "is_ui_element": detection["is_ui_element"],
+    }
 
 
 @app.get("/db/count")
@@ -80,9 +97,20 @@ async def viewer() -> str:
         if _latest_image_b64
         else '<p style="color:#5F6368;font-size:20px;">아직 수신된 캡처가 없습니다.</p>'
     )
+    detection_html = ""
+    if _latest_detection:
+        badge_color = {"icon": "#1A73E8", "button": "#34A853", "text": "#FBBC04"}.get(
+            _latest_detection["element_type"], "#9E9E9E"
+        )
+        detection_html = (
+            f'<span style="background:{badge_color};color:white;padding:4px 12px;'
+            f'border-radius:12px;font-size:14px;margin-left:8px;">'
+            f'{_latest_detection["element_type"]} '
+            f'({_latest_detection["confidence"]:.0%})</span>'
+        )
     count_html = (
         f'<p style="color:#5F6368;font-size:14px;">마지막 수신: {_captured_at} '
-        f'| DB 저장 수: <b>{get_collection().count()}</b>개</p>'
+        f'| DB 저장 수: <b>{get_collection().count()}</b>개{detection_html}</p>'
         if _captured_at
         else ""
     )
