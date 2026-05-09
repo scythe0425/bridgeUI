@@ -8,7 +8,7 @@ import 'overlay/trigger_button.dart';
 
 /// 개발 중 서버 주소. 실기기에서는 PC의 실제 IP를 입력하세요.
 /// 예: 'http://192.168.x.x:8000'
-const _serverUrl = 'http://192.168.45.167:8000'; // S23 실기기용 Windows WiFi IP
+const _serverUrl = 'http://172.21.23.130:8000'; // S23 실기기용 Windows WiFi IP
 
 void main() {
   runApp(const BridgeUIApp());
