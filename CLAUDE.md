@@ -83,16 +83,39 @@ Claude는 코드 작성 전 현재 단계를 확인하고, 해당 단계 범위 
 
 ---
 
-### 🔄 5-1단계 — 크롭 이미지 내 UI/아이콘 요소 탐지 [NEW]
+### 🔄 5-1단계 — 크롭 이미지 내 UI/아이콘 요소 탐지 [구현 중]
 
-**시퀀스 ⑥ 이후, ⑦ 이전 — 현재 단계에서 추가 필요**
+**시퀀스 ⑥ 이후, ⑦ 이전**
 
 **목표**: 사용자가 선택한 크롭 영역 안에서 실제 UI 요소(아이콘, 버튼)가 어디에 있는지 탐지하여, 노이즈(배경, 여백)를 제거하고 핵심 요소만 추출.
 
-**처리 방식**: 백엔드에서 Claude Vision으로 탐지 (별도 ML 모델 불필요)
+**구현 파일**: `backend/pipeline/ui_detector.py` ✅
 
-**생성 파일**: `backend/pipeline/ui_detector.py`
+---
 
+#### 탐지 전략: 2-Phase 로드맵
+
+**Phase 1 (현재 — 즉시 구현)**: Claude Vision 기반 탐지
+- 별도 모델 학습/배포 없이 즉시 구현 가능
+- Deep Track과 동일한 Anthropic API 재사용 → 코드 단순화
+- 새로운 앱·비표준 아이콘에도 Zero-shot 대응
+
+**Phase 2 (성능 개선 시)**: OmniParser YOLOv8 교체
+- Microsoft OmniParser v2.0이 파인튜닝한 YOLOv8 가중치(`weights/icon_detect/model.pt`) 사용
+- 67,000장 스크린샷으로 학습된 모델 → 별도 학습 불필요, 가중치만 다운로드
+- 응답 시간 목표: ~50ms (Phase 1 대비 20~60배 빠름)
+- Florence-2 캡션 레이어는 사용하지 않음 (설명 생성은 Deep Track이 담당)
+
+```bash
+# Phase 2 전환 시 모델 다운로드 (단 1회)
+huggingface-cli download microsoft/OmniParser-v2.0 --local-dir weights
+```
+
+---
+
+#### Phase 1 구현 스펙
+
+**반환 구조**
 ```python
 def detect_ui_element(image_bytes: bytes) -> dict:
     """크롭 이미지에서 주요 UI 요소를 탐지합니다.
@@ -110,19 +133,36 @@ def detect_ui_element(image_bytes: bytes) -> dict:
     """
 ```
 
+**탐지 프롬프트**
+```
+이 이미지는 모바일 앱 화면의 일부입니다.
+다음 JSON 형식으로만 답하세요. 다른 텍스트는 절대 포함하지 마세요.
+
+{
+  "is_ui_element": true or false,
+  "element_type": "icon" | "button" | "text" | "unknown",
+  "confidence": 0.0~1.0,
+  "description_hint": "요소 유형 한줄 힌트"
+}
+
+판단 기준:
+- icon: 심볼/그림 형태의 작은 UI 요소 (돋보기, 별, 하트 등)
+- button: 탭 가능한 사각형/캡슐형 영역 (텍스트+배경 포함)
+- text: 텍스트 레이블, 제목, 메뉴명
+- unknown: 배경, 여백, 판단 불가 이미지
+```
+
 **처리 흐름**
-1. 크롭 이미지를 base64 인코딩
-2. Claude Vision으로 간단한 탐지 프롬프트 호출:
-   ```
-   "이 이미지에 UI 아이콘이나 버튼이 있는가?
-   있다면 element_type(icon/button/text/unknown)과 confidence(0~1)를 JSON으로만 답하라."
-   ```
-3. 탐지 결과를 `/capture` 응답과 함께 Flutter로 반환
-4. `element_type`을 Deep Track 프롬프트의 컨텍스트로 활용
+1. 크롭 이미지 base64 인코딩
+2. Claude Vision 탐지 프롬프트 호출 → JSON 응답 파싱
+   - 마크다운 코드블록 포함 시 방어적 파싱 적용
+3. `is_ui_element: false` → "배경/여백입니다" 안내 후 종료
+4. `is_ui_element: true` → `element_type`을 CLIP 임베딩 메타데이터 + Deep Track 프롬프트 컨텍스트로 전달
+5. 탐지 실패 시 `unknown / 0.0` 폴백 (서버 에러 없이 계속 진행)
 
 **Flutter 연동**
-- 탐지된 `element_type`을 `FreezeOverlay`의 미리보기 카드에 표시
-- 예: `"아이콘으로 인식됨"` 뱃지 표시
+- 탐지된 `element_type`을 `FreezeOverlay` 미리보기 카드에 뱃지로 표시
+- 예: `"아이콘으로 인식됨"` (파란색), `"버튼으로 인식됨"` (초록색)
 
 ---
 
@@ -250,11 +290,6 @@ ANTHROPIC_API_KEY=sk-ant-...
 - 화면 하단 1/3 고정 표시
 - 닫기 버튼 터치 영역 56dp 이상
 
-**말풍선 UI 요건** (노년층 접근성)
-- 폰트 22sp 이상, 고대비 배경
-- 화면 하단 1/3 영역에 고정 표시
-- 닫기 버튼 터치 영역 56dp 이상
-
 ---
 
 ### ⬜ 10단계 — 최적화 및 성과 분석
@@ -263,6 +298,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 - CLIP 임베딩 속도 프로파일링 (목표: 1초 이내)
 - TTS 응답 지연 측정
 - 노년층 사용성 테스트 시나리오 정의
+- (선택) 5-1단계 Phase 2 전환: OmniParser YOLOv8 탐지 모델로 교체 검토
 
 ---
 
@@ -300,6 +336,8 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 | Vector DB | ChromaDB (cosine 유사도, PersistentClient) |
 | 임베딩 | CLIP `clip-ViT-B-32` (sentence-transformers) |
 | VLM | Claude Vision (`claude-sonnet-4-6`) |
+| UI 탐지 (Phase 1) | Claude Vision Zero-shot (현재 구현) |
+| UI 탐지 (Phase 2) | OmniParser YOLOv8 파인튜닝 모델 (성능 개선 시) |
 | 캡처 | Android MediaProjection API + Flutter MethodChannel |
 | TTS | flutter_tts (예정) |
 
@@ -333,7 +371,7 @@ bridgeUI/
 │   │   └── chroma_store.py                  # ChromaDB 싱글턴
 │   ├── pipeline/
 │   │   ├── embedder.py                      # CLIP 임베딩
-│   │   ├── ui_detector.py                   # 🔄 예정: 크롭 내 UI/아이콘 탐지
+│   │   ├── ui_detector.py                   # ✅ 구현됨: 크롭 내 UI/아이콘 탐지 (Phase 1)
 │   │   ├── fast_track.py                    # 🔄 예정: 유사도 검색
 │   │   └── deep_track.py                    # 🔄 예정: Claude Vision 추론
 │   ├── main.py                              # FastAPI 엔드포인트
@@ -406,3 +444,4 @@ def analyze_ui_element(image: bytes, metadata: dict) -> dict:
 - [ ] VLM 프롬프트가 목적 중심(Purpose-oriented)으로 작성되었는가?
 - [ ] 프론트엔드 성능(FPS)과 노년층 접근성(폰트 18sp+, 대비, 터치 56dp+)이 고려되었는가?
 - [ ] `/capture` 응답이 `track`, `description` 필드를 포함하는가? (7단계 이후)
+- [ ] 5-1단계 탐지 결과(`element_type`)가 Deep Track 프롬프트 컨텍스트로 전달되는가?
