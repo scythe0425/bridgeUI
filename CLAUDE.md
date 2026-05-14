@@ -28,6 +28,7 @@ Claude는 코드 작성 전 현재 단계를 확인하고, 해당 단계 범위 
 | 3 | 플러그인 기초 골격 및 트리거 구현 | | ● | | | ✅ 완료 |
 | 4 | 화면 Freeze 및 드래그 크롭 셀렉터 개발 | | ● | | | ✅ 완료 |
 | 5 | ImageCapture API 연동 및 데이터 추출·전송 | | ● | | | ✅ 완료 |
+| 5-1 | 크롭 이미지 내 UI/아이콘 요소 탐지 (OmniParser YOLOv8 Phase 2) | | | ● | | ✅ 완료 |
 | 6 | Vector DB (ChromaDB) 환경 구축 + CLIP 임베딩 저장 | | | ● | | ✅ 완료 |
 | 7 | Fast Track (고속 매칭) 로직 구현 | | | ● | | 🔄 진행 중 |
 | 8 | Deep Track (Claude Vision) 추론 엔진 연동 | | | ● | | 🔄 진행 중 |
@@ -83,7 +84,7 @@ Claude는 코드 작성 전 현재 단계를 확인하고, 해당 단계 범위 
 
 ---
 
-### 🔄 5-1단계 — 크롭 이미지 내 UI/아이콘 요소 탐지 [구현 중]
+### ✅ 5-1단계 — 크롭 이미지 내 UI/아이콘 요소 탐지 (완료)
 
 **시퀀스 ⑥ 이후, ⑦ 이전**
 
@@ -93,72 +94,57 @@ Claude는 코드 작성 전 현재 단계를 확인하고, 해당 단계 범위 
 
 ---
 
-#### 탐지 전략: 2-Phase 로드맵
+#### 탐지 전략: Phase 2 (OmniParser YOLOv8) ✅ 현재 구현
 
-**Phase 1 (현재 — 즉시 구현)**: Claude Vision 기반 탐지
-- 별도 모델 학습/배포 없이 즉시 구현 가능
-- Deep Track과 동일한 Anthropic API 재사용 → 코드 단순화
-- 새로운 앱·비표준 아이콘에도 Zero-shot 대응
+~~**Phase 1**: Claude Vision Zero-shot~~ → **Phase 2로 전환 완료**
 
-**Phase 2 (성능 개선 시)**: OmniParser YOLOv8 교체
-- Microsoft OmniParser v2.0이 파인튜닝한 YOLOv8 가중치(`weights/icon_detect/model.pt`) 사용
-- 67,000장 스크린샷으로 학습된 모델 → 별도 학습 불필요, 가중치만 다운로드
-- 응답 시간 목표: ~50ms (Phase 1 대비 20~60배 빠름)
-- Florence-2 캡션 레이어는 사용하지 않음 (설명 생성은 Deep Track이 담당)
+**Phase 2**: Microsoft OmniParser v2.0 YOLOv8 파인튜닝 모델
+- 67,000장 스크린샷으로 학습된 가중치 (`backend/weights/icon_detect/model.pt`)
+- nc=1 단일 클래스 (`icon`) — 탐지 박스 종횡비 heuristic으로 icon/button/text 구분
+- 응답 시간 ~50ms (CPU 기준)
+- Florence-2 캡션 레이어 미사용 (설명 생성은 Deep Track 담당)
+- `ANTHROPIC_API_KEY` 불필요 (탐지 단계에서 API 호출 없음)
 
 ```bash
-# Phase 2 전환 시 모델 다운로드 (단 1회)
-huggingface-cli download microsoft/OmniParser-v2.0 --local-dir weights
+# 가중치 다운로드 (단 1회, backend/ 에서 실행)
+python -c "from huggingface_hub import hf_hub_download; \
+hf_hub_download('microsoft/OmniParser-v2.0', 'icon_detect/model.pt', local_dir='weights')"
 ```
 
 ---
 
-#### Phase 1 구현 스펙
+#### Phase 2 구현 스펙
 
 **반환 구조**
 ```python
 def detect_ui_element(image_bytes: bytes) -> dict:
-    """크롭 이미지에서 주요 UI 요소를 탐지합니다.
-
-    Args:
-        image_bytes: 사용자가 선택한 크롭 영역의 PNG 바이트.
+    """크롭 이미지에서 주요 UI 요소를 탐지합니다 (OmniParser YOLOv8 Phase 2).
 
     Returns:
         {
           "is_ui_element": bool,       # UI 요소 존재 여부
           "element_type": str,         # "icon" | "button" | "text" | "unknown"
-          "confidence": float,         # 탐지 신뢰도 0.0~1.0
+          "confidence": float,         # YOLOv8 탐지 신뢰도 0.0~1.0
           "description_hint": str      # 요소 유형 힌트 (Deep Track 프롬프트에 활용)
         }
     """
 ```
 
-**탐지 프롬프트**
+**element_type 분류 로직**
 ```
-이 이미지는 모바일 앱 화면의 일부입니다.
-다음 JSON 형식으로만 답하세요. 다른 텍스트는 절대 포함하지 마세요.
-
-{
-  "is_ui_element": true or false,
-  "element_type": "icon" | "button" | "text" | "unknown",
-  "confidence": 0.0~1.0,
-  "description_hint": "요소 유형 한줄 힌트"
-}
-
-판단 기준:
-- icon: 심볼/그림 형태의 작은 UI 요소 (돋보기, 별, 하트 등)
-- button: 탭 가능한 사각형/캡슐형 영역 (텍스트+배경 포함)
-- text: 텍스트 레이블, 제목, 메뉴명
-- unknown: 배경, 여백, 판단 불가 이미지
+탐지 박스 종횡비 (width / height):
+  < 1.5  → icon   (정사각형에 가까운 심볼)
+  1.5~4  → button (가로로 넓은 탭 영역)
+  ≥ 4    → text   (매우 납작한 텍스트 바)
+탐지 없음 → unknown
 ```
 
 **처리 흐름**
-1. 크롭 이미지 base64 인코딩
-2. Claude Vision 탐지 프롬프트 호출 → JSON 응답 파싱
-   - 마크다운 코드블록 포함 시 방어적 파싱 적용
-3. `is_ui_element: false` → "배경/여백입니다" 안내 후 종료
-4. `is_ui_element: true` → `element_type`을 CLIP 임베딩 메타데이터 + Deep Track 프롬프트 컨텍스트로 전달
-5. 탐지 실패 시 `unknown / 0.0` 폴백 (서버 에러 없이 계속 진행)
+1. 크롭 이미지 PIL Image 변환
+2. YOLOv8 `predict(conf=0.3)` → 탐지 박스 목록
+3. 탐지 없음 → `unknown / 0.0` 반환
+4. 최고 confidence 박스 선택 → 종횡비로 element_type 결정
+5. `element_type`을 CLIP 메타데이터 + Deep Track 컨텍스트로 전달
 
 **Flutter 연동**
 - 탐지된 `element_type`을 `FreezeOverlay` 미리보기 카드에 뱃지로 표시
@@ -298,7 +284,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 - CLIP 임베딩 속도 프로파일링 (목표: 1초 이내)
 - TTS 응답 지연 측정
 - 노년층 사용성 테스트 시나리오 정의
-- (선택) 5-1단계 Phase 2 전환: OmniParser YOLOv8 탐지 모델로 교체 검토
+- 5-1단계 Phase 2 (OmniParser YOLOv8) 탐지 정확도 측정 및 conf 임계값 튜닝
 
 ---
 
@@ -336,8 +322,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 | Vector DB | ChromaDB (cosine 유사도, PersistentClient) |
 | 임베딩 | CLIP `clip-ViT-B-32` (sentence-transformers) |
 | VLM | Claude Vision (`claude-sonnet-4-6`) |
-| UI 탐지 (Phase 1) | Claude Vision Zero-shot (현재 구현) |
-| UI 탐지 (Phase 2) | OmniParser YOLOv8 파인튜닝 모델 (성능 개선 시) |
+| UI 탐지 | OmniParser YOLOv8 (`microsoft/OmniParser-v2.0`, nc=1, ~50ms) ✅ |
 | 캡처 | Android MediaProjection API + Flutter MethodChannel |
 | TTS | flutter_tts (예정) |
 
