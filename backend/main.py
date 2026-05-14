@@ -7,8 +7,10 @@ from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import HTMLResponse
 
 from db.chroma_store import get_collection
-from pipeline.embedder import embed_image, warmup
+from pipeline.embedder import embed_image
+from pipeline.embedder import warmup as warmup_clip
 from pipeline.ui_detector import detect_ui_element
+from pipeline.ui_detector import warmup as warmup_yolo
 
 
 _latest_image_b64: str | None = None
@@ -18,9 +20,10 @@ _latest_detection: dict | None = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """서버 시작 시 ChromaDB 컬렉션과 CLIP 모델을 미리 로드합니다."""
+    """서버 시작 시 ChromaDB 컬렉션, CLIP, OmniParser YOLOv8 모델을 미리 로드합니다."""
     get_collection()
-    warmup()  # CLIP 모델 미리 로드
+    warmup_clip()
+    warmup_yolo()
     yield
 
 
@@ -57,6 +60,7 @@ async def receive_capture(file: UploadFile = File(...)) -> dict:
                 "filename": file.filename or "capture.png",
                 "element_type": detection["element_type"],
                 "confidence": detection["confidence"],
+                "description_hint": detection.get("description_hint", ""),
             }],
         )
         count = collection.count()

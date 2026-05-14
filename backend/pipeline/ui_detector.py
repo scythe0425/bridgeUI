@@ -1,76 +1,115 @@
-import base64
-import json
-import os
+import io
+from pathlib import Path
 
-import anthropic
+from PIL import Image
+from ultralytics import YOLO
 
-_client: anthropic.Anthropic | None = None
+_WEIGHTS_PATH = Path(__file__).parent.parent / "weights" / "icon_detect" / "model.pt"
 
-_PROMPT = """이 이미지는 모바일 앱에서 캡처한 UI 영역입니다.
-다음 중 어떤 UI 요소가 가장 두드러지게 포함되어 있는지 분류하세요.
+_model: YOLO | None = None
 
-분류 기준:
-- icon: 기능을 나타내는 작은 그래픽 심볼 (예: 돋보기, 위치핀, 홈 버튼 아이콘)
-- button: 텍스트나 아이콘이 포함된 탭 가능한 버튼
-- text: 텍스트 레이블, 메뉴 항목
-- unknown: UI 요소를 특정하기 어려운 경우
-
-아래 JSON 형식으로만 답하세요. 다른 텍스트는 포함하지 마세요.
-{"element_type": "icon|button|text|unknown", "confidence": 0.0~1.0}"""
+_ELEMENT_HINTS: dict[str, str] = {
+    "icon": "심볼/그림 형태의 아이콘 요소",
+    "button": "탭 가능한 버튼 요소",
+    "text": "텍스트 레이블",
+    "unknown": "",
+}
 
 
-def _get_client() -> anthropic.Anthropic:
-    global _client
-    if _client is None:
-        _client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-    return _client
+def _get_model() -> YOLO:
+    global _model
+    if _model is None:
+        if not _WEIGHTS_PATH.exists():
+            raise FileNotFoundError(
+                f"OmniParser 가중치를 찾을 수 없습니다: {_WEIGHTS_PATH}\n"
+                "다운로드: cd backend && python -c \""
+                "from huggingface_hub import hf_hub_download; "
+                "hf_hub_download('microsoft/OmniParser-v2.0', "
+                "'icon_detect/model.pt', local_dir='weights')\""
+            )
+        _model = YOLO(str(_WEIGHTS_PATH))
+    return _model
+
+
+def warmup() -> None:
+    """OmniParser YOLOv8 모델을 미리 로드합니다 (서버 시작 시 호출).
+
+    Note:
+        최초 호출 시 모델 가중치를 메모리에 로드합니다. 이후 호출은 no-op입니다.
+    """
+    _get_model()
+
+
+def _classify_by_geometry(x1: float, y1: float, x2: float, y2: float) -> str:
+    """탐지 박스의 종횡비(aspect ratio)로 element_type을 추론합니다.
+
+    OmniParser icon_detect 모델은 nc=1 (단일 클래스 'icon')이므로,
+    탐지 박스의 형태로 icon / button / text를 구분합니다.
+
+    Args:
+        x1, y1, x2, y2: 탐지 박스 좌표 (픽셀).
+
+    Returns:
+        "icon" | "button" | "text" | "unknown"
+    """
+    h = y2 - y1
+    if h <= 0:
+        return "unknown"
+    ratio = (x2 - x1) / h
+    if ratio < 1.5:
+        return "icon"
+    elif ratio < 4.0:
+        return "button"
+    return "text"
 
 
 def detect_ui_element(image_bytes: bytes) -> dict:
-    """크롭 이미지에서 주요 UI 요소를 탐지합니다.
+    """크롭 이미지에서 주요 UI 요소를 탐지합니다 (OmniParser YOLOv8 Phase 2).
 
     Args:
         image_bytes: 사용자가 선택한 크롭 영역의 PNG 바이트.
 
     Returns:
         {
-          "is_ui_element": bool,     # UI 요소 존재 여부
-          "element_type": str,       # "icon" | "button" | "text" | "unknown"
-          "confidence": float,       # 탐지 신뢰도 0.0~1.0
+          "is_ui_element": bool,       # UI 요소 존재 여부
+          "element_type": str,         # "icon" | "button" | "text" | "unknown"
+          "confidence": float,         # 탐지 신뢰도 0.0~1.0
+          "description_hint": str      # 요소 유형 힌트 (Deep Track 프롬프트에 활용)
         }
 
     Raises:
-        KeyError: ANTHROPIC_API_KEY 환경 변수가 설정되지 않은 경우.
+        FileNotFoundError: OmniParser 가중치 파일이 없는 경우 (서버 시작 시 warmup으로 조기 감지).
     """
     try:
-        image_b64 = base64.standard_b64encode(image_bytes).decode()
-        response = _get_client().messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=100,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": "image/png",
-                                "data": image_b64,
-                            },
-                        },
-                        {"type": "text", "text": _PROMPT},
-                    ],
-                }
-            ],
-        )
-        result = json.loads(response.content[0].text.strip())
-        element_type = result.get("element_type", "unknown")
-        confidence = float(result.get("confidence", 0.0))
+        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        results = _get_model().predict(image, verbose=False, conf=0.3)
+
+        if not results or len(results[0].boxes) == 0:
+            return {
+                "is_ui_element": False,
+                "element_type": "unknown",
+                "confidence": 0.0,
+                "description_hint": "",
+            }
+
+        boxes = results[0].boxes
+        best_idx = int(boxes.conf.argmax())
+        conf = float(boxes.conf[best_idx])
+        x1, y1, x2, y2 = boxes.xyxy[best_idx].tolist()
+        element_type = _classify_by_geometry(x1, y1, x2, y2)
+
         return {
-            "is_ui_element": element_type != "unknown",
+            "is_ui_element": True,
             "element_type": element_type,
-            "confidence": confidence,
+            "confidence": conf,
+            "description_hint": _ELEMENT_HINTS[element_type],
         }
+    except FileNotFoundError:
+        raise
     except Exception:
-        return {"is_ui_element": False, "element_type": "unknown", "confidence": 0.0}
+        return {
+            "is_ui_element": False,
+            "element_type": "unknown",
+            "confidence": 0.0,
+            "description_hint": "",
+        }
