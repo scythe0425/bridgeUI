@@ -10,6 +10,12 @@ const _kMinRect = 40.0;
 class FreezeOverlay extends StatefulWidget {
   final Uint8List imageBytes;
 
+  /// 캡처 직전 포그라운드 앱의 패키지명 (예: "com.nhn.android.nmap").
+  final String appPackage;
+
+  /// 캡처 직전 포그라운드 앱의 이름 (예: "네이버 지도").
+  final String appName;
+
   /// 요소 추출 완료 시 [ExtractedElement]를 전달하는 콜백.
   final void Function(ExtractedElement element) onElementExtracted;
 
@@ -19,6 +25,8 @@ class FreezeOverlay extends StatefulWidget {
   const FreezeOverlay({
     super.key,
     required this.imageBytes,
+    this.appPackage = '',
+    this.appName = '',
     required this.onElementExtracted,
     required this.onDismiss,
   });
@@ -98,7 +106,14 @@ class _FreezeOverlayState extends State<FreezeOverlay> {
     setState(() => _isExtracting = true);
     try {
       final dpr = MediaQuery.of(context).devicePixelRatio;
-      final element = await _extractor.extractFromRect(widget.imageBytes, _cropRect!, dpr);
+      final raw = await _extractor.extractFromRect(widget.imageBytes, _cropRect!, dpr);
+      // 앱 context를 ExtractedElement에 추가합니다.
+      final element = ExtractedElement(
+        croppedImageBytes: raw.croppedImageBytes,
+        metadata: raw.metadata,
+        appPackage: widget.appPackage,
+        appName: widget.appName,
+      );
       if (!mounted) return;
       setState(() => _extracted = element);
       widget.onElementExtracted(element);
