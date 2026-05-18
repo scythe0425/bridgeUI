@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'capture/capture_response.dart';
 import 'capture/capture_sender.dart';
 import 'capture/capture_service.dart';
 import 'capture/extracted_element.dart';
@@ -66,13 +67,8 @@ class _BridgeUIHomeState extends State<BridgeUIHome> {
     }
   }
 
-  Future<void> _onElementExtracted(ExtractedElement element) async {
-    try {
-      await _sender.send(element);
-    } catch (_) {
-      // 전송 실패는 UI를 방해하지 않도록 조용히 처리
-    }
-  }
+  Future<CaptureResponse> _onElementExtracted(ExtractedElement element) =>
+      _sender.send(element);
 
   void _onDismiss() {
     setState(() {

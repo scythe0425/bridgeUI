@@ -22,6 +22,7 @@
 **/backend/.env
 **/backend/chroma_data/
 **/backend/weights/
+**/backend/db/screenshots/
 
 # ----------------------------------------------------------------------------
 # 3. 운영체제 및 에디터 관련

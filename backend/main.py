@@ -11,6 +11,13 @@ from pipeline.embedder import embed_image
 from pipeline.embedder import warmup as warmup_clip
 from pipeline.ui_detector import detect_ui_element
 from pipeline.ui_detector import warmup as warmup_yolo
+from pipeline.hash_track import (
+    compute as phash_compute,
+    load_from_collection as phash_load,
+    register as phash_register,
+    search as hash_search,
+    to_str as phash_to_str,
+)
 from pipeline.fast_track import search as fast_search
 from pipeline.deep_track import analyze as deep_analyze
 
@@ -23,10 +30,12 @@ _latest_response: dict | None = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """서버 시작 시 ChromaDB 컬렉션, CLIP, OmniParser YOLOv8 모델을 미리 로드합니다."""
-    get_collection()
+    """서버 시작 시 ChromaDB 컬렉션, CLIP, YOLOv8, pHash 스토어를 미리 로드합니다."""
+    collection = get_collection()
     warmup_clip()
     warmup_yolo()
+    loaded = phash_load(collection)
+    print(f"[startup] pHash 스토어: {loaded}개 로드 / ChromaDB: {collection.count()}개")
     yield
 
 
@@ -39,13 +48,12 @@ async def receive_capture(
     app_package: str = Form(default=""),
     app_name: str = Form(default=""),
 ) -> dict:
-    """Flutter 앱에서 전송된 크롭 이미지를 수신하고 하이브리드 추론을 실행합니다.
+    """Flutter 앱에서 전송된 크롭 이미지를 수신하고 3단계 캐시 파이프라인을 실행합니다.
 
     처리 순서:
-      1. UI 요소 탐지 (OmniParser YOLOv8)
-      2. CLIP 임베딩 생성
-      3. Fast Track: 유사도 ≥ 0.90이면 캐시 설명 즉시 반환
-      4. Deep Track: 캐시 미스면 Claude Vision으로 설명 생성 후 ChromaDB 저장
+      STAGE 1 — pHash (Perceptual Hash): 해밍 거리 ≤ 8 → <1ms, track: "hash"
+      STAGE 2 — CLIP 유사도: 코사인 ≥ 0.90 + app_package 필터 → ~50ms, track: "fast"
+      STAGE 3 — Claude Vision (Deep Track): 신규 설명 생성 → 1~3s, track: "deep"
 
     Args:
         file: 크롭된 UI 요소의 PNG 파일.
@@ -53,7 +61,7 @@ async def receive_capture(
         app_name: 캡처 앱의 사용자 표시 이름 (예: "네이버 지도").
 
     Returns:
-        { track, description, element_type, confidence, similarity, app_name }
+        { track, description, element_type, confidence, similarity, hamming, app_name }
     """
     global _latest_image_b64, _captured_at, _latest_detection, _latest_response
 
@@ -62,16 +70,31 @@ async def receive_capture(
     _captured_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     try:
-        # ① UI 요소 탐지
+        # ① UI 요소 탐지 (OmniParser YOLOv8)
         detection = detect_ui_element(data)
         _latest_detection = detection
         element_type = detection["element_type"]
         confidence = detection["confidence"]
 
-        # ② CLIP 임베딩
+        # STAGE 1: pHash — 해밍 거리 ≤ 8이면 즉시 반환 (<1ms)
+        hash_result = hash_search(data, app_package=app_package)
+        if hash_result:
+            response = {
+                "track": "hash",
+                "description": hash_result["description"],
+                "element_type": hash_result["element_type"],
+                "confidence": confidence,
+                "similarity": None,
+                "hamming": hash_result["hamming"],
+                "app_name": app_name or app_package,
+            }
+            _latest_response = response
+            return response
+
+        # ② CLIP 임베딩 생성 (~50ms)
         vector = embed_image(data)
 
-        # ③ Fast Track — app_package 필터로 동일 앱 내 검색
+        # STAGE 2: CLIP 유사도 — 코사인 ≥ 0.90 이면 반환
         fast_result = fast_search(vector, app_package=app_package)
         if fast_result:
             response = {
@@ -80,12 +103,13 @@ async def receive_capture(
                 "element_type": fast_result["element_type"],
                 "confidence": confidence,
                 "similarity": fast_result["similarity"],
+                "hamming": None,
                 "app_name": app_name or app_package,
             }
             _latest_response = response
             return response
 
-        # ④ Deep Track — Claude Vision 설명 생성
+        # STAGE 3: Deep Track — Claude Vision으로 신규 설명 생성 (1~3s)
         description = deep_analyze(
             data,
             element_type=element_type,
@@ -93,9 +117,10 @@ async def receive_capture(
             app_name=app_name,
         )
 
-        # ⑤ ChromaDB 저장 (description 포함)
+        # ChromaDB 저장 (pHash + CLIP 벡터 + 설명 모두 저장)
         collection = get_collection()
         doc_id = str(uuid.uuid4())
+        ph = phash_compute(data)
         collection.add(
             ids=[doc_id],
             embeddings=[vector],
@@ -108,8 +133,11 @@ async def receive_capture(
                 "description": description,
                 "app_package": app_package,
                 "app_name": app_name,
+                "phash": phash_to_str(ph),
             }],
         )
+        # 인메모리 pHash 스토어에도 즉시 등록 (다음 요청부터 Stage 1 히트 가능)
+        phash_register(doc_id, ph, description, element_type, app_package)
 
         response = {
             "track": "deep",
@@ -117,6 +145,7 @@ async def receive_capture(
             "element_type": element_type,
             "confidence": confidence,
             "similarity": None,
+            "hamming": None,
             "app_name": app_name or app_package,
         }
         _latest_response = response
@@ -129,6 +158,7 @@ async def receive_capture(
             "element_type": None,
             "confidence": None,
             "similarity": None,
+            "hamming": None,
             "app_name": app_name or app_package,
             "detail": str(e),
         }
