@@ -73,14 +73,25 @@ def image_to_bytes(img: Image.Image) -> bytes:
     return buf.getvalue()
 
 
+def resolve_screenshot(filename: str) -> Path | None:
+    """.png가 없으면 .jpg 폴백을 시도하여 실제 경로를 반환합니다."""
+    path = SCREENSHOTS_DIR / filename
+    if path.exists():
+        return path
+    alt = path.with_suffix(".jpg")
+    if alt.exists():
+        return alt
+    return None
+
+
 def check_screenshots() -> bool:
     """스크린샷 3장이 모두 있는지 확인합니다."""
     ok = True
     for app_key, (filename, _, _) in APP_CONFIG.items():
-        path = SCREENSHOTS_DIR / filename
-        if path.exists():
+        path = resolve_screenshot(filename)
+        if path:
             size_kb = path.stat().st_size // 1024
-            print(c(f"  ✓ {filename} ({size_kb}KB)", "green"))
+            print(c(f"  ✓ {path.name} ({size_kb}KB)", "green"))
         else:
             print(c(f"  ✗ {filename} — 없음", "red"))
             ok = False
@@ -202,7 +213,7 @@ def main() -> None:
 
     all_results = []
     for app_key, (filename, app_package, _) in APP_CONFIG.items():
-        screenshot_path = SCREENSHOTS_DIR / filename
+        screenshot_path = resolve_screenshot(filename)
         sample_ids = SAMPLE_ELEMENTS.get(app_key, [])
         app_name = {
             "baemin":    "배달의민족",

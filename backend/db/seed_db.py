@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from db.chroma_store import get_collection
 from pipeline.embedder import embed_image  # embed_image_bytes 아님
+from pipeline.hash_track import compute as phash_compute, to_str as phash_to_str
 
 # ─────────────────────────────────────────────
 # 기준 해상도 (1080×2340)
@@ -829,9 +830,14 @@ def seed_app(
     print(f"  파일: {screenshot_path.name}  |  패키지: {app_package}")
     print(f"{'='*60}")
 
+    # .png 없으면 .jpg 로 자동 fallback
     if not screenshot_path.exists():
-        print(f"  ✗  스크린샷 없음 → 건너뜁니다: {screenshot_path}")
-        return 0, len(elements)
+        alt = screenshot_path.with_suffix(".jpg")
+        if alt.exists():
+            screenshot_path = alt
+        else:
+            print(f"  ✗  스크린샷 없음 → 건너뜁니다: {screenshot_path}")
+            return 0, len(elements)
 
     img = Image.open(screenshot_path).convert("RGB")
     src_w, src_h = img.size
@@ -852,6 +858,7 @@ def seed_app(
             img_bytes = image_to_bytes(cropped)
             embedding = embed_image(img_bytes)
 
+            ph = phash_compute(img_bytes)
             collection.add(
                 ids=[elem.element_id],
                 embeddings=[embedding],
@@ -862,6 +869,7 @@ def seed_app(
                     "label":          elem.label,
                     "description":    elem.description,
                     "bbox_ref":       str(elem.bbox),
+                    "phash":          phash_to_str(ph),
                     "source":         "seed",
                 }],
                 documents=[elem.description],
