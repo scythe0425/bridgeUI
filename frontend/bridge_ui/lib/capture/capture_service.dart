@@ -30,4 +30,20 @@ class CaptureService {
     if (bytes == null) return null;
     return CaptureResult(imageBytes: bytes, metadata: {});
   }
+
+  /// 캡처 시점 직전 포그라운드 앱의 패키지명과 이름을 반환합니다.
+  ///
+  /// UsageStatsManager를 사용하며, 권한(PACKAGE_USAGE_STATS)이 없으면
+  /// 빈 값을 반환합니다 (에러를 던지지 않음).
+  ///
+  /// Returns:
+  ///   {'package': 'com.nhn.android.nmap', 'name': '네이버 지도'}
+  Future<Map<String, String>> getForegroundApp() async {
+    try {
+      final result = await _channel.invokeMapMethod<String, String>('getForegroundApp');
+      return result ?? {};
+    } catch (_) {
+      return {};
+    }
+  }
 }

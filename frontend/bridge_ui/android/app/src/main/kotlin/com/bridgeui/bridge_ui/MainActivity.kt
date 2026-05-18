@@ -2,8 +2,10 @@ package com.bridgeui.bridge_ui
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
@@ -48,6 +50,7 @@ class MainActivity : FlutterActivity() {
                     )
                 }
                 "getLastCapture" -> result.success(lastCaptureBytes)
+                "getForegroundApp" -> result.success(getForegroundApp())
                 else -> result.notImplemented()
             }
         }
@@ -138,6 +141,36 @@ class MainActivity : FlutterActivity() {
     private fun stopForegroundService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             stopService(Intent(this, MediaProjectionForegroundService::class.java))
+        }
+    }
+
+    /// UsageStatsManager로 직전 실행 앱의 패키지명과 앱 이름을 반환합니다.
+    /// PACKAGE_USAGE_STATS 권한이 없으면 빈 값을 반환합니다.
+    private fun getForegroundApp(): Map<String, String> {
+        return try {
+            val usm = getSystemService(USAGE_STATS_SERVICE) as UsageStatsManager
+            val now = System.currentTimeMillis()
+            val stats = usm.queryUsageStats(
+                UsageStatsManager.INTERVAL_DAILY,
+                now - 60_000L,
+                now,
+            )
+            val prev = stats
+                ?.filter { it.packageName != packageName && it.lastTimeUsed > 0 }
+                ?.maxByOrNull { it.lastTimeUsed }
+
+            if (prev == null) return mapOf("package" to "", "name" to "")
+
+            val appName = try {
+                packageManager.getApplicationLabel(
+                    packageManager.getApplicationInfo(prev.packageName, 0)
+                ).toString()
+            } catch (_: PackageManager.NameNotFoundException) {
+                ""
+            }
+            mapOf("package" to prev.packageName, "name" to appName)
+        } catch (_: Exception) {
+            mapOf("package" to "", "name" to "")
         }
     }
 }

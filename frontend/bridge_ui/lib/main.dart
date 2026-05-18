@@ -8,7 +8,7 @@ import 'overlay/trigger_button.dart';
 
 /// 개발 중 서버 주소. 실기기에서는 PC의 실제 IP를 입력하세요.
 /// 예: 'http://192.168.x.x:8000'
-const _serverUrl = 'http://192.168.45.72:8000'; // S23 실기기용 Windows WiFi IP
+const _serverUrl = 'http://192.168.45.3:8000'; // S23 실기기용 Windows WiFi IP
 
 void main() {
   runApp(const BridgeUIApp());
@@ -47,12 +47,20 @@ class _BridgeUIHomeState extends State<BridgeUIHome> {
 
   String _statusMessage = '버튼을 눌러 화면을 분석하세요';
   Uint8List? _frozenScreen;
+  String _appPackage = '';
+  String _appName = '';
 
   Future<void> _onTrigger() async {
     setState(() => _statusMessage = '정보를 찾는 중입니다...');
     try {
+      // 캡처 권한 요청 전에 직전 앱 정보를 수집합니다.
+      final appInfo = await _captureService.getForegroundApp();
       final bytes = await _captureService.requestCapture();
-      setState(() => _frozenScreen = bytes);
+      setState(() {
+        _frozenScreen = bytes;
+        _appPackage = appInfo['package'] ?? '';
+        _appName = appInfo['name'] ?? '';
+      });
     } catch (_) {
       setState(() => _statusMessage = '잠시 후 다시 시도해 주세요');
     }
@@ -69,6 +77,8 @@ class _BridgeUIHomeState extends State<BridgeUIHome> {
   void _onDismiss() {
     setState(() {
       _frozenScreen = null;
+      _appPackage = '';
+      _appName = '';
       _statusMessage = '버튼을 눌러 화면을 분석하세요';
     });
   }
@@ -78,6 +88,8 @@ class _BridgeUIHomeState extends State<BridgeUIHome> {
     if (_frozenScreen != null) {
       return FreezeOverlay(
         imageBytes: _frozenScreen!,
+        appPackage: _appPackage,
+        appName: _appName,
         onElementExtracted: _onElementExtracted,
         onDismiss: _onDismiss,
       );

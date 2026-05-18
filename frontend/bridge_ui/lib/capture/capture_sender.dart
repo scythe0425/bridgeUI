@@ -7,10 +7,10 @@ class CaptureSender {
 
   const CaptureSender({required this.serverUrl});
 
-  /// 크롭된 이미지를 서버의 /capture 엔드포인트로 전송합니다.
+  /// 크롭된 이미지와 앱 context를 서버의 /capture 엔드포인트로 전송합니다.
   ///
   /// Args:
-  ///   element: 전송할 [ExtractedElement].
+  ///   element: 전송할 [ExtractedElement] (크롭 이미지 + 앱 정보 포함).
   ///
   /// Returns:
   ///   서버 응답 상태 코드.
@@ -24,7 +24,9 @@ class CaptureSender {
         'file',
         element.croppedImageBytes,
         filename: 'capture.png',
-      ));
+      ))
+      ..fields['app_package'] = element.appPackage
+      ..fields['app_name'] = element.appName;
 
     final response = await request.send().timeout(
       const Duration(seconds: 10),
