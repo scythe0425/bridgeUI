@@ -1,7 +1,10 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import '../capture/capture_response.dart';
 import '../capture/element_extractor.dart';
 import '../capture/extracted_element.dart';
+import '../tts/tts_service.dart';
+import 'result_bubble.dart';
 
 const _kHandleSize = 32.0;
 const _kMinRect = 40.0;
@@ -16,8 +19,8 @@ class FreezeOverlay extends StatefulWidget {
   /// 캡처 직전 포그라운드 앱의 이름 (예: "네이버 지도").
   final String appName;
 
-  /// 요소 추출 완료 시 [ExtractedElement]를 전달하는 콜백.
-  final void Function(ExtractedElement element) onElementExtracted;
+  /// 요소 추출 완료 시 [ExtractedElement]를 전달하고 [CaptureResponse]를 받는 콜백.
+  final Future<CaptureResponse> Function(ExtractedElement element) onElementExtracted;
 
   /// 오버레이를 닫는 콜백.
   final VoidCallback onDismiss;
@@ -37,10 +40,18 @@ class FreezeOverlay extends StatefulWidget {
 
 class _FreezeOverlayState extends State<FreezeOverlay> {
   final _extractor = ElementExtractor();
+  final _tts = TtsService();
 
   Rect? _cropRect;
   ExtractedElement? _extracted;
+  CaptureResponse? _captureResult;
   bool _isExtracting = false;
+
+  @override
+  void dispose() {
+    _tts.dispose();
+    super.dispose();
+  }
 
   /// 탭 위치를 중심으로 초기 크롭 사각형을 배치합니다.
   void _handleTap(TapDownDetails details) {
@@ -107,7 +118,6 @@ class _FreezeOverlayState extends State<FreezeOverlay> {
     try {
       final dpr = MediaQuery.of(context).devicePixelRatio;
       final raw = await _extractor.extractFromRect(widget.imageBytes, _cropRect!, dpr);
-      // 앱 context를 ExtractedElement에 추가합니다.
       final element = ExtractedElement(
         croppedImageBytes: raw.croppedImageBytes,
         metadata: raw.metadata,
@@ -116,7 +126,10 @@ class _FreezeOverlayState extends State<FreezeOverlay> {
       );
       if (!mounted) return;
       setState(() => _extracted = element);
-      widget.onElementExtracted(element);
+      final result = await widget.onElementExtracted(element);
+      if (!mounted) return;
+      setState(() => _captureResult = result);
+      _tts.speak(result.description);
     } catch (_) {
       // 전송 실패는 UI를 방해하지 않도록 조용히 처리
     } finally {
@@ -214,8 +227,19 @@ class _FreezeOverlayState extends State<FreezeOverlay> {
             ),
           ],
 
-          // 전송 완료 미리보기 카드
-          if (_extracted != null) _ElementPreview(element: _extracted!),
+          // 전송 완료 미리보기 카드 (결과 도착 전까지 표시)
+          if (_extracted != null && _captureResult == null)
+            _ElementPreview(element: _extracted!),
+
+          // 분석 결과 말풍선 (결과 도착 후 표시)
+          if (_captureResult != null)
+            ResultBubble(
+              result: _captureResult!,
+              onDismiss: () {
+                _tts.stop();
+                setState(() => _captureResult = null);
+              },
+            ),
 
           // 닫기 버튼
           Positioned(

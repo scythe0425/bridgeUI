@@ -20,6 +20,9 @@ _APP_NAMES: dict[str, str] = {
     "kr.co.yogiyo.rookieDeveloper": "요기요",
     "com.baemin.android": "배달의민족",
     "com.coupang.mobile": "쿠팡",
+    "mobi.korail.Talk": "코레일",
+    "com.lotte.lotteon": "롯데온",
+    "com.nhn.android.band": "네이버 밴드",
 }
 
 
