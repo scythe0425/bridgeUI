@@ -24,7 +24,6 @@ UI 요소를 크롭하여 CLIP 임베딩 후 ChromaDB에 저장합니다.
 import argparse
 import io
 import sys
-import uuid
 from pathlib import Path
 from typing import NamedTuple
 
@@ -34,8 +33,9 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from db.chroma_store import get_collection
-from pipeline.embedder import embed_image  # embed_image_bytes 아님
+from pipeline.embedder import embed_image, warmup as warmup_clip
 from pipeline.hash_track import compute as phash_compute, to_str as phash_to_str
+from pipeline.ui_detector import detect_from_full_screenshot, warmup as warmup_yolo
 
 # ─────────────────────────────────────────────
 # 기준 해상도 (1080×2340)
@@ -810,9 +810,14 @@ def seed_app(
     app_package: str,
     elements: list[UIElement],
     collection,
+    full_bytes: bytes,
     dry_run: bool = False,
 ) -> tuple[int, int]:
-    """단일 앱의 UI 요소를 ChromaDB에 저장합니다.
+    """단일 앱의 UI 요소를 YOLO 크롭 방식으로 ChromaDB에 저장합니다.
+
+    수동 bbox를 크롭 영역으로 사용하여 detect_from_full_screenshot()을 호출합니다.
+    YOLO가 영역 내 UI 요소를 탐지하면 그 bbox로 정밀 크롭하고,
+    탐지 실패 시 수동 bbox 크롭으로 fallback합니다.
 
     Args:
         app_key: 앱 식별자 ("baemin" 등).
@@ -820,32 +825,25 @@ def seed_app(
         app_package: 앱 패키지명 (예: "com.baemin.android").
         elements: UIElement 목록.
         collection: ChromaDB 컬렉션 객체.
+        full_bytes: 전체 스크린샷 PNG 바이트 (YOLO 탐지용).
         dry_run: True이면 임베딩/저장 없이 목록만 출력.
 
     Returns:
         (성공 수, 실패 수) 튜플.
     """
-    print(f"\n{'='*60}")
-    print(f"  앱: {elements[0].app}  ({len(elements)}개 요소)")
-    print(f"  파일: {screenshot_path.name}  |  패키지: {app_package}")
-    print(f"{'='*60}")
-
-    # .png 없으면 .jpg 로 자동 fallback
-    if not screenshot_path.exists():
-        alt = screenshot_path.with_suffix(".jpg")
-        if alt.exists():
-            screenshot_path = alt
-        else:
-            print(f"  ✗  스크린샷 없음 → 건너뜁니다: {screenshot_path}")
-            return 0, len(elements)
-
     img = Image.open(screenshot_path).convert("RGB")
     src_w, src_h = img.size
-    print(f"  이미지 크기: {src_w}×{src_h}px")
+    print(f"\n{'='*60}")
+    print(f"  앱: {elements[0].app}  ({len(elements)}개 요소)")
+    print(f"  파일: {screenshot_path.name} ({src_w}×{src_h})  |  패키지: {app_package}")
+    print(f"{'='*60}")
 
+    yolo_count, manual_count = 0, 0
     ok, fail = 0, 0
+
     for elem in elements:
         scaled = scale_bbox(elem.bbox, src_w, src_h)
+        x1, y1, x2, y2 = scaled
         label_str = f"  [{elem.element_type:6s}] {elem.label}"
 
         if dry_run:
@@ -854,12 +852,24 @@ def seed_app(
             continue
 
         try:
-            cropped = img.crop(scaled)
-            img_bytes = image_to_bytes(cropped)
-            embedding = embed_image(img_bytes)
+            # YOLO 크롭: 수동 bbox를 크롭 영역으로 전달 → 중심거리 최소 박스 선택
+            detection = detect_from_full_screenshot(full_bytes, x1, y1, x2, y2)
+            img_bytes = detection["element_image_bytes"]
 
+            if detection["fallback"]:
+                manual_count += 1
+                crop_method = "manual"
+                method_tag = "fallback"
+            else:
+                yolo_count += 1
+                crop_method = "yolo"
+                method_tag = f"yolo conf={detection['confidence']:.2f}"
+
+            embedding = embed_image(img_bytes)
             ph = phash_compute(img_bytes)
-            collection.add(
+
+            # upsert: 동일 element_id 재실행 시 덮어씀
+            collection.upsert(
                 ids=[elem.element_id],
                 embeddings=[embedding],
                 metadatas=[{
@@ -871,21 +881,27 @@ def seed_app(
                     "bbox_ref":       str(elem.bbox),
                     "phash":          phash_to_str(ph),
                     "source":         "seed",
+                    "crop_method":    crop_method,
                 }],
                 documents=[elem.description],
             )
-            print(f"{label_str}  ✓")
+            print(f"{label_str}  ✓  ({method_tag})")
             ok += 1
 
         except Exception as exc:
             print(f"{label_str}  ✗  {exc}")
             fail += 1
 
+    if not dry_run:
+        print(f"\n  YOLO 크롭: {yolo_count}개  |  수동 fallback: {manual_count}개")
     return ok, fail
 
 
 def run_seed(screenshots_dir: Path, dry_run: bool = False) -> None:
-    """전체 시딩 파이프라인을 실행합니다.
+    """전체 시딩 파이프라인을 실행합니다 (YOLO 크롭 방식).
+
+    각 앱 스크린샷에서 detect_from_full_screenshot()으로 YOLO 크롭 이미지를 추출하여
+    CLIP 임베딩과 pHash를 저장합니다. 기존 항목은 upsert로 덮어씁니다.
 
     Args:
         screenshots_dir: 스크린샷 PNG 파일이 있는 디렉터리.
@@ -895,21 +911,42 @@ def run_seed(screenshots_dir: Path, dry_run: bool = False) -> None:
         print("\n[DRY RUN 모드 — ChromaDB 저장 없이 목록만 확인합니다]")
         collection = None
     else:
+        # YOLO + CLIP 모델 워밍업
+        print("\n[모델 워밍업 중...]")
+        warmup_yolo()
+        warmup_clip()
+        print("  완료")
+
         collection = get_collection()
-        print(f"\n현재 ChromaDB 저장 수: {collection.count()}개")
+        print(f"현재 ChromaDB 저장 수: {collection.count()}개")
 
     total_ok, total_fail = 0, 0
     for app_key, (filename, app_package, elements) in APP_CONFIG.items():
+        # .png 없으면 .jpg 폴백
         screenshot_path = screenshots_dir / filename
+        if not screenshot_path.exists():
+            alt = screenshot_path.with_suffix(".jpg")
+            if alt.exists():
+                screenshot_path = alt
+            else:
+                print(f"\n  ✗  스크린샷 없음 → 건너뜁니다: {filename}")
+                total_fail += len(elements)
+                continue
+
+        # 전체 스크린샷 바이트 (YOLO 탐지용 — 앱별 1회 로드)
+        with open(screenshot_path, "rb") as f:
+            full_bytes = f.read()
+
         ok, fail = seed_app(
-            app_key, screenshot_path, app_package, elements, collection, dry_run
+            app_key, screenshot_path, app_package, elements,
+            collection, full_bytes, dry_run,
         )
         total_ok += ok
         total_fail += fail
 
     print(f"\n{'='*60}")
     print(f"  완료  ✓ {total_ok}개 저장  ✗ {total_fail}개 실패")
-    if not dry_run and total_ok > 0:
+    if not dry_run and collection is not None and total_ok > 0:
         print(f"  ChromaDB 최종 저장 수: {collection.count()}개")
     print(f"{'='*60}\n")
 

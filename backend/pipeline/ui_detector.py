@@ -93,12 +93,19 @@ def detect_from_full_screenshot(
     crop_y1: int,
     crop_x2: int,
     crop_y2: int,
-    margin: int = 10,
+    margin: int = 20,
 ) -> dict:
-    """전체 스크린샷에서 YOLO로 UI 요소를 탐지하고 크롭 영역 내 최적 요소를 선택합니다.
+    """전체 스크린샷에서 YOLO로 UI 요소를 탐지하고 크롭 영역 중심에 가장 가까운 요소를 선택합니다.
 
     OmniParser가 전체 스크린샷 기반으로 학습되어 패딩 없이 conf 0.5+ 달성합니다.
-    선택 우선순위: ① 크롭 영역에 완전 포함 → ② 부분 겹침 (overlap×conf 기준) → ③ fallback.
+
+    사용자는 원하는 UI를 정중앙에 두고 크롭하므로, YOLO 탐지 박스 중
+    박스 중심점이 크롭 중심에 가장 가까운 것을 최적 요소로 선택합니다.
+
+    선택 우선순위:
+      ① 박스 중심이 크롭 영역 내부에 있는 것 중 크롭 중심에 가장 가까운 박스
+      ② 없으면 크롭 영역 margin 내에 중심이 있는 것 중 가장 가까운 박스
+      ③ 모두 없으면 사용자 크롭 좌표로 직접 fallback
 
     Args:
         full_image_bytes: 전체 스크린샷 PNG 바이트.
@@ -106,7 +113,7 @@ def detect_from_full_screenshot(
         crop_y1: 크롭 영역 상단 경계 (물리 픽셀).
         crop_x2: 크롭 영역 우측 경계 (물리 픽셀).
         crop_y2: 크롭 영역 하단 경계 (물리 픽셀).
-        margin: 경계 판정 여유값 (픽셀). 미세한 bbox 오차 허용.
+        margin: 크롭 영역 밖 허용 여유값 (픽셀). 박스 중심이 경계를 살짝 벗어난 경우 허용.
 
     Returns:
         {
@@ -138,37 +145,38 @@ def detect_from_full_screenshot(
         if not all_boxes or total == 0:
             return _fallback_from_coords(full_image, crop_x1, crop_y1, crop_x2, crop_y2)
 
-        fully_inside: list[tuple] = []
-        partially_inside: list[tuple] = []
+        # 크롭 중심점
+        crop_cx = (crop_x1 + crop_x2) / 2.0
+        crop_cy = (crop_y1 + crop_y2) / 2.0
+
+        # 박스 중심이 크롭 내부에 있는 후보 / margin 범위 내 후보 분리
+        inside: list[tuple] = []    # 박스 중심이 크롭 영역 안
+        near: list[tuple] = []      # 박스 중심이 크롭 + margin 안
 
         for i in range(total):
             bx1, by1, bx2, by2 = [float(v) for v in all_boxes.xyxy[i].tolist()]
             conf = float(all_boxes.conf[i])
 
-            # ① 완전 포함: 박스가 크롭 영역 안에 완전히 들어있음 (margin 허용)
-            if (bx1 >= crop_x1 - margin and by1 >= crop_y1 - margin
-                    and bx2 <= crop_x2 + margin and by2 <= crop_y2 + margin):
-                fully_inside.append((bx1, by1, bx2, by2, conf))
-                continue
+            bcx = (bx1 + bx2) / 2.0
+            bcy = (by1 + by2) / 2.0
+            dist = ((bcx - crop_cx) ** 2 + (bcy - crop_cy) ** 2) ** 0.5
 
-            # ② 부분 겹침: 박스와 크롭 영역이 교차하는 경우
-            ix1 = max(bx1, crop_x1)
-            iy1 = max(by1, crop_y1)
-            ix2 = min(bx2, crop_x2)
-            iy2 = min(by2, crop_y2)
-            if ix2 > ix1 and iy2 > iy1:
-                inter_area = (ix2 - ix1) * (iy2 - iy1)
-                box_area = (bx2 - bx1) * (by2 - by1)
-                overlap_ratio = inter_area / box_area if box_area > 0 else 0.0
-                partially_inside.append((bx1, by1, bx2, by2, conf, overlap_ratio))
+            if crop_x1 <= bcx <= crop_x2 and crop_y1 <= bcy <= crop_y2:
+                inside.append((bx1, by1, bx2, by2, conf, dist))
+            elif (crop_x1 - margin <= bcx <= crop_x2 + margin
+                  and crop_y1 - margin <= bcy <= crop_y2 + margin):
+                near.append((bx1, by1, bx2, by2, conf, dist))
 
-        if fully_inside:
-            bx1, by1, bx2, by2, conf = max(fully_inside, key=lambda x: x[4])
-            print(f"[ui_detector] fully_inside 선택 conf={conf:.3f} box=({bx1:.0f},{by1:.0f},{bx2:.0f},{by2:.0f})")
-        elif partially_inside:
-            best = max(partially_inside, key=lambda x: x[5] * x[4])
-            bx1, by1, bx2, by2, conf, overlap = best
-            print(f"[ui_detector] partial_overlap 선택 conf={conf:.3f} overlap={overlap:.2f}")
+        # ① 크롭 내부 중심 박스 → 중심 거리 최소 선택
+        if inside:
+            best = min(inside, key=lambda x: x[5])
+            bx1, by1, bx2, by2, conf, dist = best
+            print(f"[ui_detector] 중심거리 선택(inside) dist={dist:.1f} conf={conf:.3f} box=({bx1:.0f},{by1:.0f},{bx2:.0f},{by2:.0f})")
+        # ② margin 범위 박스 → 중심 거리 최소 선택
+        elif near:
+            best = min(near, key=lambda x: x[5])
+            bx1, by1, bx2, by2, conf, dist = best
+            print(f"[ui_detector] 중심거리 선택(near)   dist={dist:.1f} conf={conf:.3f} box=({bx1:.0f},{by1:.0f},{bx2:.0f},{by2:.0f})")
         else:
             return _fallback_from_coords(full_image, crop_x1, crop_y1, crop_x2, crop_y2)
 
