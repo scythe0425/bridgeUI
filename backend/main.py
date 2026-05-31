@@ -2,6 +2,7 @@ import base64
 import uuid
 from datetime import datetime
 from contextlib import asynccontextmanager
+from typing import Optional
 
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import HTMLResponse
@@ -9,7 +10,7 @@ from fastapi.responses import HTMLResponse
 from db.chroma_store import get_collection
 from pipeline.embedder import embed_image
 from pipeline.embedder import warmup as warmup_clip
-from pipeline.ui_detector import detect_ui_element
+from pipeline.ui_detector import detect_from_full_screenshot, detect_ui_element
 from pipeline.ui_detector import warmup as warmup_yolo
 from pipeline.hash_track import (
     compute as phash_compute,
@@ -44,19 +45,29 @@ app = FastAPI(title="bridgeUI Capture Viewer", lifespan=lifespan)
 
 @app.post("/capture")
 async def receive_capture(
-    file: UploadFile = File(...),
+    full_image: Optional[UploadFile] = File(default=None),
+    file: Optional[UploadFile] = File(default=None),
+    crop_x1: int = Form(default=0),
+    crop_y1: int = Form(default=0),
+    crop_x2: int = Form(default=0),
+    crop_y2: int = Form(default=0),
     app_package: str = Form(default=""),
     app_name: str = Form(default=""),
 ) -> dict:
-    """Flutter 앱에서 전송된 크롭 이미지를 수신하고 3단계 캐시 파이프라인을 실행합니다.
+    """Flutter 앱에서 전송된 이미지를 수신하고 3단계 캐시 파이프라인을 실행합니다.
 
     처리 순서:
       STAGE 1 — pHash (Perceptual Hash): 해밍 거리 ≤ 8 → <1ms, track: "hash"
       STAGE 2 — CLIP 유사도: 코사인 ≥ 0.90 + app_package 필터 → ~50ms, track: "fast"
       STAGE 3 — Claude Vision (Deep Track): 신규 설명 생성 → 1~3s, track: "deep"
 
+    신규 방식: full_image(전체 스크린샷) + crop 좌표 → YOLO 전체 탐지 후 크롭 내 최적 요소 선택.
+    구버전 폴백: file(크롭 이미지)만 전송 → 캔버스 패딩 후 탐지.
+
     Args:
-        file: 크롭된 UI 요소의 PNG 파일.
+        full_image: 전체 스크린샷 PNG (신규 방식).
+        file: 크롭된 UI 요소 PNG (구버전 폴백).
+        crop_x1, crop_y1, crop_x2, crop_y2: 크롭 영역 좌표 (물리 픽셀, 신규 방식).
         app_package: 캡처 앱의 패키지명 (예: "com.nhn.android.nmap").
         app_name: 캡처 앱의 사용자 표시 이름 (예: "네이버 지도").
 
@@ -65,13 +76,37 @@ async def receive_capture(
     """
     global _latest_image_b64, _captured_at, _latest_detection, _latest_response
 
-    data = await file.read()
-    _latest_image_b64 = base64.b64encode(data).decode()
     _captured_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     try:
-        # ① UI 요소 탐지 (OmniParser YOLOv8)
-        detection = detect_ui_element(data)
+        # ① UI 요소 탐지 — 신규(전체 스크린샷) 또는 구버전(크롭) 방식 선택
+        use_full = (
+            full_image is not None
+            and crop_x2 > crop_x1
+            and crop_y2 > crop_y1
+        )
+
+        if use_full:
+            full_data = await full_image.read()
+            detection = detect_from_full_screenshot(
+                full_data, crop_x1, crop_y1, crop_x2, crop_y2
+            )
+            data = detection["element_image_bytes"]
+        elif file is not None:
+            data = await file.read()
+            detection = detect_ui_element(data)
+        else:
+            return {
+                "track": "error",
+                "description": "정보를 찾는 중입니다",
+                "element_type": None,
+                "confidence": None,
+                "similarity": None,
+                "hamming": None,
+                "app_name": app_name or app_package,
+            }
+
+        _latest_image_b64 = base64.b64encode(data).decode()
         _latest_detection = detection
         element_type = detection["element_type"]
         confidence = detection["confidence"]
@@ -126,7 +161,7 @@ async def receive_capture(
             embeddings=[vector],
             metadatas=[{
                 "captured_at": _captured_at,
-                "filename": file.filename or "capture.png",
+                "filename": (file.filename if file else None) or "capture.png",
                 "element_type": element_type,
                 "confidence": confidence,
                 "description_hint": detection.get("description_hint", ""),

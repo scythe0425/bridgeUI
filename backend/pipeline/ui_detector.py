@@ -6,7 +6,7 @@ from ultralytics import YOLO
 
 _WEIGHTS_PATH = Path(__file__).parent.parent / "weights" / "icon_detect" / "model.pt"
 
-# OmniParser는 전체 스크린샷 기반 모델 — 크롭 이미지를 이 크기 배경에 패딩하여 탐지
+# 구버전 폴백 전용 — 크롭 이미지를 이 크기 배경에 패딩하여 탐지
 _CANVAS_W = 640
 _CANVAS_H = 960
 
@@ -44,25 +44,6 @@ def warmup() -> None:
     _get_model()
 
 
-def _pad_to_canvas(image: Image.Image) -> tuple[Image.Image, int, int]:
-    """크롭 이미지를 스크린샷 크기 배경 중앙에 배치합니다.
-
-    OmniParser는 전체 스크린샷 컨텍스트가 있을 때 conf 0.6+ 수준으로 탐지합니다.
-    크롭만 단독 입력하면 conf 0.05 미만으로 탐지에 실패합니다.
-
-    Args:
-        image: 크롭된 UI 요소 이미지.
-
-    Returns:
-        (패딩된 캔버스, 아이콘 좌측 오프셋 x, 상단 오프셋 y)
-    """
-    canvas = Image.new("RGB", (_CANVAS_W, _CANVAS_H), "#f0f0f0")
-    paste_x = (_CANVAS_W - image.width) // 2
-    paste_y = (_CANVAS_H - image.height) // 2
-    canvas.paste(image, (paste_x, paste_y))
-    return canvas, paste_x, paste_y
-
-
 def _classify_by_geometry(x1: float, y1: float, x2: float, y2: float) -> str:
     """탐지 박스의 종횡비(aspect ratio)로 element_type을 추론합니다.
 
@@ -86,21 +67,204 @@ def _classify_by_geometry(x1: float, y1: float, x2: float, y2: float) -> str:
     return "text"
 
 
-def detect_ui_element(image_bytes: bytes) -> dict:
-    """크롭 이미지에서 주요 UI 요소를 탐지합니다 (OmniParser YOLOv8 Phase 2).
-
-    크롭 이미지를 640x960 배경에 중앙 배치 후 탐지합니다.
-    OmniParser가 전체 스크린샷 기반으로 학습되어, 패딩 처리 시 conf 0.6+ 달성.
+def _extract_element_bytes(image: Image.Image, x1: float, y1: float, x2: float, y2: float) -> bytes:
+    """이미지에서 bbox 영역을 크롭하여 PNG 바이트로 반환합니다.
 
     Args:
-        image_bytes: 사용자가 선택한 크롭 영역의 PNG 바이트.
+        image: 원본 PIL 이미지.
+        x1, y1, x2, y2: 크롭 좌표 (픽셀, 실수).
+
+    Returns:
+        크롭된 PNG 바이트.
+    """
+    ix1 = max(0, int(x1))
+    iy1 = max(0, int(y1))
+    ix2 = min(image.width, int(x2))
+    iy2 = min(image.height, int(y2))
+    cropped = image.crop((ix1, iy1, ix2, iy2))
+    buf = io.BytesIO()
+    cropped.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def detect_from_full_screenshot(
+    full_image_bytes: bytes,
+    crop_x1: int,
+    crop_y1: int,
+    crop_x2: int,
+    crop_y2: int,
+    margin: int = 10,
+) -> dict:
+    """전체 스크린샷에서 YOLO로 UI 요소를 탐지하고 크롭 영역 내 최적 요소를 선택합니다.
+
+    OmniParser가 전체 스크린샷 기반으로 학습되어 패딩 없이 conf 0.5+ 달성합니다.
+    선택 우선순위: ① 크롭 영역에 완전 포함 → ② 부분 겹침 (overlap×conf 기준) → ③ fallback.
+
+    Args:
+        full_image_bytes: 전체 스크린샷 PNG 바이트.
+        crop_x1: 크롭 영역 좌측 경계 (물리 픽셀).
+        crop_y1: 크롭 영역 상단 경계 (물리 픽셀).
+        crop_x2: 크롭 영역 우측 경계 (물리 픽셀).
+        crop_y2: 크롭 영역 하단 경계 (물리 픽셀).
+        margin: 경계 판정 여유값 (픽셀). 미세한 bbox 오차 허용.
 
     Returns:
         {
-          "is_ui_element": bool,       # UI 요소 존재 여부
-          "element_type": str,         # "icon" | "button" | "text" | "unknown"
-          "confidence": float,         # 탐지 신뢰도 0.0~1.0
-          "description_hint": str      # 요소 유형 힌트 (Deep Track 프롬프트에 활용)
+          "is_ui_element": bool,
+          "element_image_bytes": bytes,   # 선택된 요소의 정밀 크롭 PNG
+          "element_type": str,            # "icon" | "button" | "text" | "unknown"
+          "confidence": float,
+          "description_hint": str,
+          "fallback": bool,               # True면 YOLO 박스 없어서 사용자 크롭 사용
+        }
+
+    Raises:
+        FileNotFoundError: OmniParser 가중치 파일이 없는 경우.
+    """
+    try:
+        full_image = Image.open(io.BytesIO(full_image_bytes)).convert("RGB")
+
+        # YOLO 탐지 — 전체 스크린샷, 패딩 불필요, conf 0.05 (OmniParser 원본 임계값)
+        results = _get_model().predict(full_image, verbose=False, conf=0.05)
+        all_boxes = results[0].boxes if results else None
+
+        total = len(all_boxes) if all_boxes is not None else 0
+        print(
+            f"[ui_detector] full={full_image.size} "
+            f"crop=({crop_x1},{crop_y1},{crop_x2},{crop_y2}) "
+            f"total_boxes={total}"
+        )
+
+        if not all_boxes or total == 0:
+            return _fallback_from_coords(full_image, crop_x1, crop_y1, crop_x2, crop_y2)
+
+        fully_inside: list[tuple] = []
+        partially_inside: list[tuple] = []
+
+        for i in range(total):
+            bx1, by1, bx2, by2 = [float(v) for v in all_boxes.xyxy[i].tolist()]
+            conf = float(all_boxes.conf[i])
+
+            # ① 완전 포함: 박스가 크롭 영역 안에 완전히 들어있음 (margin 허용)
+            if (bx1 >= crop_x1 - margin and by1 >= crop_y1 - margin
+                    and bx2 <= crop_x2 + margin and by2 <= crop_y2 + margin):
+                fully_inside.append((bx1, by1, bx2, by2, conf))
+                continue
+
+            # ② 부분 겹침: 박스와 크롭 영역이 교차하는 경우
+            ix1 = max(bx1, crop_x1)
+            iy1 = max(by1, crop_y1)
+            ix2 = min(bx2, crop_x2)
+            iy2 = min(by2, crop_y2)
+            if ix2 > ix1 and iy2 > iy1:
+                inter_area = (ix2 - ix1) * (iy2 - iy1)
+                box_area = (bx2 - bx1) * (by2 - by1)
+                overlap_ratio = inter_area / box_area if box_area > 0 else 0.0
+                partially_inside.append((bx1, by1, bx2, by2, conf, overlap_ratio))
+
+        if fully_inside:
+            bx1, by1, bx2, by2, conf = max(fully_inside, key=lambda x: x[4])
+            print(f"[ui_detector] fully_inside 선택 conf={conf:.3f} box=({bx1:.0f},{by1:.0f},{bx2:.0f},{by2:.0f})")
+        elif partially_inside:
+            best = max(partially_inside, key=lambda x: x[5] * x[4])
+            bx1, by1, bx2, by2, conf, overlap = best
+            print(f"[ui_detector] partial_overlap 선택 conf={conf:.3f} overlap={overlap:.2f}")
+        else:
+            return _fallback_from_coords(full_image, crop_x1, crop_y1, crop_x2, crop_y2)
+
+        element_bytes = _extract_element_bytes(full_image, bx1, by1, bx2, by2)
+        element_type = _classify_by_geometry(bx1, by1, bx2, by2)
+
+        return {
+            "is_ui_element": True,
+            "element_image_bytes": element_bytes,
+            "element_type": element_type,
+            "confidence": conf,
+            "description_hint": _ELEMENT_HINTS[element_type],
+            "fallback": False,
+        }
+
+    except FileNotFoundError:
+        raise
+    except Exception as e:
+        print(f"[ui_detector] detect_from_full_screenshot 오류: {e}")
+        try:
+            full_image = Image.open(io.BytesIO(full_image_bytes)).convert("RGB")
+            return _fallback_from_coords(full_image, crop_x1, crop_y1, crop_x2, crop_y2)
+        except Exception:
+            return {
+                "is_ui_element": False,
+                "element_image_bytes": full_image_bytes,
+                "element_type": "unknown",
+                "confidence": 0.0,
+                "description_hint": "",
+                "fallback": True,
+            }
+
+
+def _fallback_from_coords(
+    full_image: Image.Image,
+    crop_x1: int,
+    crop_y1: int,
+    crop_x2: int,
+    crop_y2: int,
+) -> dict:
+    """YOLO 탐지 실패 시 사용자 크롭 좌표로 직접 잘라 반환합니다.
+
+    Args:
+        full_image: 전체 스크린샷 PIL 이미지.
+        crop_x1, crop_y1, crop_x2, crop_y2: 크롭 영역 (물리 픽셀).
+
+    Returns:
+        fallback=True인 탐지 결과 딕셔너리.
+    """
+    print(f"[ui_detector] fallback — 사용자 크롭 영역 직접 사용")
+    element_bytes = _extract_element_bytes(full_image, crop_x1, crop_y1, crop_x2, crop_y2)
+    return {
+        "is_ui_element": False,
+        "element_image_bytes": element_bytes,
+        "element_type": "unknown",
+        "confidence": 0.0,
+        "description_hint": "",
+        "fallback": True,
+    }
+
+
+# ──────────────────────────────────────────────
+# 구버전 폴백 (크롭 이미지만 전송하는 구버전 클라이언트 대응)
+# ──────────────────────────────────────────────
+
+def _pad_to_canvas(image: Image.Image) -> tuple[Image.Image, int, int]:
+    """크롭 이미지를 스크린샷 크기 배경 중앙에 배치합니다 (구버전 폴백 전용).
+
+    Args:
+        image: 크롭된 UI 요소 이미지.
+
+    Returns:
+        (패딩된 캔버스, 아이콘 좌측 오프셋 x, 상단 오프셋 y)
+    """
+    canvas = Image.new("RGB", (_CANVAS_W, _CANVAS_H), "#f0f0f0")
+    paste_x = (_CANVAS_W - image.width) // 2
+    paste_y = (_CANVAS_H - image.height) // 2
+    canvas.paste(image, (paste_x, paste_y))
+    return canvas, paste_x, paste_y
+
+
+def detect_ui_element(image_bytes: bytes) -> dict:
+    """크롭 이미지에서 UI 요소를 탐지합니다 (구버전 폴백 전용).
+
+    전체 스크린샷 없이 크롭만 전송된 경우 사용합니다.
+    640×960 캔버스에 패딩 후 탐지합니다.
+
+    Args:
+        image_bytes: 크롭된 UI 요소의 PNG 바이트.
+
+    Returns:
+        {
+          "is_ui_element": bool,
+          "element_type": str,
+          "confidence": float,
+          "description_hint": str,
         }
 
     Raises:
@@ -114,30 +278,21 @@ def detect_ui_element(image_bytes: bytes) -> dict:
         all_boxes = results[0].boxes if results else None
 
         print(
-            f"[ui_detector] crop={crop.size} canvas={canvas.size} "
+            f"[ui_detector:legacy] crop={crop.size} canvas={canvas.size} "
             f"boxes={len(all_boxes) if all_boxes is not None else 0} "
             f"confs={[round(float(c), 3) for c in all_boxes.conf] if all_boxes and len(all_boxes) > 0 else []}"
         )
 
         if not all_boxes or len(all_boxes) == 0:
-            return {
-                "is_ui_element": False,
-                "element_type": "unknown",
-                "confidence": 0.0,
-                "description_hint": "",
-            }
+            return {"is_ui_element": False, "element_type": "unknown", "confidence": 0.0, "description_hint": ""}
 
-        # 크롭 영역(캔버스 기준)과 겹치는 박스만 필터링
-        crop_x1 = offset_x
-        crop_y1 = offset_y
-        crop_x2 = offset_x + crop.width
-        crop_y2 = offset_y + crop.height
+        crop_x1, crop_y1 = offset_x, offset_y
+        crop_x2, crop_y2 = offset_x + crop.width, offset_y + crop.height
 
         best_conf = -1.0
         best_box = None
         for i in range(len(all_boxes)):
             bx1, by1, bx2, by2 = all_boxes.xyxy[i].tolist()
-            # 박스가 크롭 영역과 겹치는지 확인
             if bx2 > crop_x1 and bx1 < crop_x2 and by2 > crop_y1 and by1 < crop_y2:
                 conf = float(all_boxes.conf[i])
                 if conf > best_conf:
@@ -145,12 +300,7 @@ def detect_ui_element(image_bytes: bytes) -> dict:
                     best_box = (bx1, by1, bx2, by2)
 
         if best_box is None:
-            return {
-                "is_ui_element": False,
-                "element_type": "unknown",
-                "confidence": 0.0,
-                "description_hint": "",
-            }
+            return {"is_ui_element": False, "element_type": "unknown", "confidence": 0.0, "description_hint": ""}
 
         element_type = _classify_by_geometry(*best_box)
         return {
@@ -162,9 +312,4 @@ def detect_ui_element(image_bytes: bytes) -> dict:
     except FileNotFoundError:
         raise
     except Exception:
-        return {
-            "is_ui_element": False,
-            "element_type": "unknown",
-            "confidence": 0.0,
-            "description_hint": "",
-        }
+        return {"is_ui_element": False, "element_type": "unknown", "confidence": 0.0, "description_hint": ""}
