@@ -50,10 +50,11 @@ Claude는 코드 작성 전 현재 단계를 확인하고, 해당 단계 범위 
   ③  화면 Freeze + Dimming
   ④  사용자: 분석할 아이콘/영역 탭
   ⑤  크롭 영역 드래그 조절 (이동 + 리사이즈)
-  ⑥  크롭 이미지 추출 (dp→px 변환) + app_package/app_name 메타데이터 첨부
+  ⑥  전체 스크린샷 바이트 + 크롭 좌표(물리px) 추출 + app_package/app_name 메타데이터 첨부
   ⑦  로딩 UI 표시 ("잠시만 기다려주세요")
-  ⑧  서버로 분석 요청 (크롭 이미지 + app_package + app_name)
-  ⑨  OmniParser YOLOv8 → element_type 탐지 (캔버스 패딩 후 탐지)
+  ⑧  서버로 분석 요청 (full_image 전체 스크린샷 + crop_x1/y1/x2/y2 + app_package + app_name)
+  ⑨  OmniParser YOLOv8 → 전체 화면 탐지(conf 0.05) → 크롭 영역 내 완전 포함 박스 선택
+      └─ 선택 우선순위: ① 완전 포함(conf 최고) → ② 부분 겹침(overlap×conf 최고) → ③ 사용자 크롭 fallback
   ⑩  Stage 1 — pHash (Perceptual Hash): 해밍 거리 ≤ 8 → 즉시 반환 (<1ms, track: "hash")
       └─ 캐시 미스 → CLIP 임베딩 생성 (512차원 벡터)
   ⑪  Stage 2 — CLIP 유사도: app_package 필터 코사인 ≥ 0.90 → 반환 (~80ms, track: "fast")
@@ -80,9 +81,9 @@ Claude는 코드 작성 전 현재 단계를 확인하고, 해당 단계 범위 
 | `trigger_button.dart` | ① 하단 파란 버튼, 캡처 트리거 |
 | `capture_service.dart` | ③ MediaProjection 화면 캡처 + `getForegroundApp()` MethodChannel |
 | `freeze_overlay.dart` | ③④⑤ 정지 화면 + 드래그 크롭 셀렉터 (이동 + 리사이즈) |
-| `element_extractor.dart` | ⑥ dp → px 변환 후 이미지 크롭 |
-| `extracted_element.dart` | ⑥ 크롭 이미지 + metadata + appPackage + appName 모델 |
-| `capture_sender.dart` | ⑧ 백엔드 `/capture`로 multipart POST (이미지 + 앱 정보) |
+| `element_extractor.dart` | ⑥ dp → px 변환 + 전체 스크린샷 바이트 & 크롭 좌표 포함 |
+| `extracted_element.dart` | ⑥ 전체 스크린샷 + 크롭 좌표(물리px) + appPackage + appName 모델 |
+| `capture_sender.dart` | ⑧ 백엔드 `/capture`로 multipart POST (full_image + crop 좌표 + 앱 정보) |
 | `MainActivity.kt` | ② `UsageStatsManager`로 직전 앱 패키지명 반환 |
 
 **앱 context 수집 흐름**
@@ -92,8 +93,13 @@ Claude는 코드 작성 전 현재 단계를 확인하고, 해당 단계 범위 
   → { package: "com.nhn.android.nmap", name: "네이버 지도" }
   → requestCapture() [MediaProjection]
   → FreezeOverlay(appPackage, appName)
-  → ExtractedElement { croppedImageBytes, metadata, appPackage, appName }
-  → CaptureSender.send() → POST { file, app_package, app_name }
+  → ExtractedElement {
+      fullScreenshotBytes,          ← 전체 스크린샷 PNG
+      croppedImageBytes,            ← 사용자 크롭 (fallback 용도)
+      cropPxLeft/Top/Right/Bottom,  ← 물리px 크롭 좌표
+      metadata, appPackage, appName
+    }
+  → CaptureSender.send() → POST { full_image, crop_x1/y1/x2/y2, app_package, app_name }
 ```
 
 **핵심 해결 사항**
@@ -104,32 +110,37 @@ Claude는 코드 작성 전 현재 단계를 확인하고, 해당 단계 범위 
 
 ---
 
-### ✅ 5-1단계 — 크롭 이미지 내 UI/아이콘 요소 탐지 (완료)
+### ✅ 5-1단계 — 전체 화면 기반 UI/아이콘 요소 탐지 (완료 → Phase 3으로 개선)
 
 **시퀀스 ⑨ 담당**
 
-**목표**: 사용자가 선택한 크롭 영역 안에서 실제 UI 요소(아이콘, 버튼)가 어디에 있는지 탐지하여 element_type을 결정.
+**목표**: 전체 스크린샷에서 YOLO로 모든 UI 요소를 탐지한 후, 사용자 크롭 영역 내에 완전히 포함된 요소를 선택하여 element_type과 정밀한 element 이미지를 결정.
 
 **구현 파일**: `backend/pipeline/ui_detector.py` ✅
 
 ---
 
-#### 탐지 전략: Phase 2 (OmniParser YOLOv8) ✅ 현재 구현
+#### 탐지 전략: Phase 3 (전체 스크린샷 기반) ✅ 현재 구현
 
-~~**Phase 1**: Claude Vision Zero-shot~~ → **Phase 2로 전환 완료**
+| Phase | 방식 | 상태 |
+|-------|------|------|
+| Phase 1 | Claude Vision Zero-shot | ~~완료~~ 전환 |
+| Phase 2 | 크롭 이미지 640×960 캔버스 패딩 → YOLO (conf 0.03~0.1) | ~~완료~~ 전환 |
+| **Phase 3** | **전체 스크린샷 → YOLO (conf 0.5+) → 크롭 내 최적 박스 선택** | ✅ 현재 |
 
-**Phase 2**: Microsoft OmniParser v2.0 YOLOv8 파인튜닝 모델
-- 67,000장 스크린샷으로 학습된 가중치 (`backend/weights/icon_detect/model.pt`)
-- nc=1 단일 클래스 (`icon`) — 탐지 박스 종횡비 heuristic으로 icon/button/text 구분
-- `ANTHROPIC_API_KEY` 불필요 (탐지 단계에서 API 호출 없음)
-
-**핵심 발견: 캔버스 패딩 필수**
-OmniParser는 전체 스크린샷 컨텍스트 기반 모델. 크롭 이미지 단독 입력 시 conf 0.03 (탐지 실패).
-크롭을 640×960 배경에 중앙 배치 후 탐지하면 conf 0.6+ 달성.
+**Phase 3 핵심 설계**
+OmniParser는 전체 스크린샷 컨텍스트 기반으로 학습됨. 전체 화면을 그대로 입력하면 conf 0.5+ 달성.
+탐지된 모든 박스 중 사용자 크롭 영역과의 포함 관계로 최적 요소 선택.
 
 ```python
-# 탐지 전 전처리
-canvas(640×960) ← 크롭 이미지 중앙 배치 → YOLO predict(conf=0.1) → 크롭 영역 박스 필터링
+# detect_from_full_screenshot() 처리 흐름
+전체 스크린샷 → YOLO predict(conf=0.05)   # OmniParser 원본 임계값
+  ↓ 모든 박스에 대해:
+  ① 크롭 영역에 완전 포함(margin=10px) → conf 최고 박스 선택
+  ② 없으면 부분 겹침 → overlap_ratio × conf 최고 박스 선택
+  ③ 없으면 → 사용자 크롭 좌표로 직접 자름 (fallback)
+  ↓
+  선택된 박스로 element 이미지 추출 → pHash/CLIP/Claude Vision 공급
 ```
 
 ```bash
@@ -138,22 +149,31 @@ python -c "from huggingface_hub import hf_hub_download; \
 hf_hub_download('microsoft/OmniParser-v2.0', 'icon_detect/model.pt', local_dir='weights')"
 ```
 
-**반환 구조**
+**주요 함수 구조**
 ```python
-def detect_ui_element(image_bytes: bytes) -> dict:
-    """크롭 이미지에서 주요 UI 요소를 탐지합니다 (OmniParser YOLOv8 Phase 2).
+def detect_from_full_screenshot(
+    full_image_bytes: bytes,
+    crop_x1: int, crop_y1: int, crop_x2: int, crop_y2: int,
+    margin: int = 10,
+) -> dict:
+    """전체 스크린샷에서 YOLO로 탐지 후 크롭 영역 내 최적 요소를 선택합니다.
 
     Returns:
         {
-          "is_ui_element": bool,       # UI 요소 존재 여부
-          "element_type": str,         # "icon" | "button" | "text" | "unknown"
-          "confidence": float,         # YOLOv8 탐지 신뢰도 0.0~1.0
-          "description_hint": str      # 요소 유형 힌트 (Deep Track 프롬프트에 활용)
+          "is_ui_element": bool,
+          "element_image_bytes": bytes,   # YOLO bbox로 정밀 추출된 element PNG
+          "element_type": str,            # "icon" | "button" | "text" | "unknown"
+          "confidence": float,            # YOLOv8 탐지 신뢰도 (conf 0.05 기준)
+          "description_hint": str,
+          "fallback": bool,               # True면 YOLO 탐지 없어서 사용자 크롭 사용
         }
     """
+
+def detect_ui_element(image_bytes: bytes) -> dict:
+    """[구버전 폴백] 크롭 이미지만 전송된 경우 캔버스 패딩 방식으로 탐지합니다."""
 ```
 
-**element_type 분류 로직**
+**element_type 분류 로직** (Phase 2/3 공통)
 ```
 탐지 박스 종횡비 (width / height):
   < 1.5  → icon   (정사각형에 가까운 심볼)
@@ -345,6 +365,15 @@ def analyze(
 # ... 주요 앱 추가 가능
 ```
 
+**`/capture` 요청 파라미터 (multipart/form-data)**
+```
+full_image  : 전체 스크린샷 PNG 파일 (신규 방식, 권장)
+crop_x1/y1/x2/y2 : 크롭 영역 물리 픽셀 좌표 (신규 방식)
+file        : 크롭 이미지 PNG 파일 (구버전 폴백, full_image 없을 때만 사용)
+app_package : 앱 패키지명 (예: "com.nhn.android.nmap")
+app_name    : 앱 표시 이름 (예: "네이버 지도")
+```
+
 **`/capture` 응답 형태**
 ```json
 { "track": "hash", "description": "처음 화면으로 돌아가는 버튼이에요.", "element_type": "icon", "confidence": 0.72, "similarity": null, "hamming": 2, "app_name": "배달의민족" }
@@ -407,8 +436,9 @@ export ANTHROPIC_API_KEY=sk-ant-...
 - TTS 발화 시작 지연 측정
 
 **탐지 품질 튜닝**
-- OmniParser conf 임계값 (현재 0.10) — `backend/tests/test_detector.py` 활용
-- 크롭 이미지 크기별 탐지 신뢰도 분석
+- OmniParser conf 임계값 (현재 0.05, 전체 스크린샷 기준) — `backend/tests/test_detector.py` 활용
+- margin 파라미터 (현재 10px) — 박스 경계 판정 여유값, 줄이면 정밀↑ 미스↑
+- 전체 스크린샷 탐지 신뢰도 vs 구버전 패딩 방식 비교 측정
 
 **확장**
 - `_APP_NAMES` 매핑 테이블 확장 (카카오맵, 카카오택시 등)
@@ -472,7 +502,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 | Vector DB | ChromaDB (cosine 유사도, PersistentClient) |
 | 임베딩 | CLIP `clip-ViT-B-32` (sentence-transformers) |
 | VLM | Claude Vision (`claude-sonnet-4-6`) |
-| UI 탐지 | OmniParser YOLOv8 (`microsoft/OmniParser-v2.0`, nc=1, 캔버스 패딩) ✅ |
+| UI 탐지 | OmniParser YOLOv8 (`microsoft/OmniParser-v2.0`, nc=1, 전체 스크린샷 입력) ✅ |
 | 앱 context | Android `UsageStatsManager` (직전 포그라운드 앱 패키지명 수집) ✅ |
 | Stage 1 캐시 | pHash (`imagehash>=4.3.0`) — 인메모리 스토어, 해밍 거리 ≤ 8, <1ms ✅ |
 | DB 사전 구축 | `seed_db.py` — 3개 앱 71개 UI 요소 CLIP 임베딩 + pHash 사전 저장 ✅ |
@@ -516,7 +546,7 @@ bridgeUI/
 │   │       └── korail.jpg                   # 코레일 스크린샷
 │   ├── pipeline/
 │   │   ├── embedder.py                      # CLIP 임베딩 (512차원, warmup 포함)
-│   │   ├── ui_detector.py                   # ✅ OmniParser YOLOv8 Phase 2 (캔버스 패딩)
+│   │   ├── ui_detector.py                   # ✅ OmniParser YOLOv8 Phase 3 (전체 스크린샷 기반)
 │   │   ├── hash_track.py                    # ✅ Stage 1: pHash 인메모리 스토어 (<1ms)
 │   │   ├── fast_track.py                    # ✅ Stage 2: CLIP + app_package 필터 (~80ms)
 │   │   └── deep_track.py                    # ✅ Stage 3: Claude Vision 설명 생성 + ChromaDB 캐싱
@@ -544,6 +574,8 @@ bridgeUI/
 ### Backend (FastAPI)
 - Vector DB는 **ChromaDB** 사용. 컬렉션은 `get_collection()` 싱글턴으로만 접근할 것.
 - `/capture` 엔드포인트는 항상 `track`, `description`, `element_type`, `confidence`, `similarity`, `hamming`, `app_name` 필드를 포함한 JSON을 반환할 것.
+- `/capture` 수신 시 `full_image`(전체 스크린샷) + `crop_x1/y1/x2/y2`가 있으면 `detect_from_full_screenshot()` 사용, `file`만 있으면 `detect_ui_element()` 구버전 폴백 사용.
+- `detect_from_full_screenshot()`이 반환한 `element_image_bytes`를 pHash·CLIP·Claude Vision 모두에 사용할 것 (사용자 크롭이 아님).
 - Deep Track 호출 실패 시 `"정보를 찾는 중입니다"` 메시지를 반환하고 에러를 노출하지 말 것.
 - Stage 2 (CLIP) 검색 시 반드시 `app_package` 필터를 적용하여 앱 간 오탐을 방지할 것.
 - Stage 1 (pHash) 검색도 `app_package` 필터를 적용할 것 (동일한 아이콘 형태의 오탐 방지).
@@ -609,5 +641,8 @@ def analyze_ui_element(image: bytes, metadata: dict) -> dict:
 - [ ] 프론트엔드 성능(FPS)과 노년층 접근성(폰트 18sp+, 대비, 터치 56dp+)이 고려되었는가?
 - [ ] `/capture` 응답이 `track`, `description`, `element_type`, `confidence`, `similarity`, `hamming`, `app_name` 필드를 포함하는가?
 - [ ] 5-1단계 탐지 결과(`element_type`)가 Deep Track 프롬프트 컨텍스트로 전달되는가?
+- [ ] `/capture`가 `full_image` 수신 시 `detect_from_full_screenshot()`을 호출하는가?
+- [ ] pHash·CLIP·Claude Vision에 사용자 크롭이 아닌 `element_image_bytes`(YOLO 추출)를 사용하는가?
+- [ ] 전체 스크린샷 전송 시 `fullScreenshotBytes`와 `cropPx*` 좌표가 `ExtractedElement`에 포함되는가?
 - [ ] seed_db 대상 앱의 새 요소 추가 시 `UIElement` 목록과 `APP_CONFIG`를 모두 업데이트하는가?
 - [ ] ChromaDB 메타데이터에 `phash` 필드가 포함되어 있는가?
