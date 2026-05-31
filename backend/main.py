@@ -201,6 +201,57 @@ async def receive_capture(
         return err
 
 
+@app.post("/detect")
+async def detect_elements(
+    full_image: UploadFile = File(...),
+) -> dict:
+    """전체 스크린샷에서 UI 요소를 YOLO로 탐지하여 bbox 목록만 반환합니다 (분석 없음).
+
+    프리즈 직후 백그라운드에서 호출되어 사용자의 크롭 작업과 병렬 실행됩니다.
+
+    Args:
+        full_image: 전체 스크린샷 PNG.
+
+    Returns:
+        {
+          "elements": [{"x1","y1","x2","y2","conf","type"}, ...],
+          "image_width": int,
+          "image_height": int,
+        }
+    """
+    try:
+        from PIL import Image as PILImage
+        import io as _io
+        from pipeline.ui_detector import _get_model, _classify_by_geometry
+
+        image_data = await full_image.read()
+        img = PILImage.open(_io.BytesIO(image_data)).convert("RGB")
+
+        results = _get_model().predict(img, verbose=False, conf=0.3)
+        all_boxes = results[0].boxes if results else None
+
+        elements = []
+        if all_boxes and len(all_boxes) > 0:
+            for i in range(len(all_boxes)):
+                x1, y1, x2, y2 = [float(v) for v in all_boxes.xyxy[i].tolist()]
+                conf = float(all_boxes.conf[i])
+                el_type = _classify_by_geometry(x1, y1, x2, y2)
+                elements.append({
+                    "x1": int(x1), "y1": int(y1),
+                    "x2": int(x2), "y2": int(y2),
+                    "conf": round(conf, 3),
+                    "type": el_type,
+                })
+
+        return {
+            "elements": elements,
+            "image_width": img.width,
+            "image_height": img.height,
+        }
+    except Exception as e:
+        return {"elements": [], "image_width": 0, "image_height": 0, "error": str(e)}
+
+
 @app.get("/db/count")
 async def db_count() -> dict:
     """ChromaDB에 저장된 이미지 수를 반환합니다.
@@ -233,7 +284,7 @@ async def viewer() -> str:
         app = _latest_response.get("app_name", "")
         sim = _latest_response.get("similarity")
 
-        track_color = {"fast": "#34A853", "deep": "#1A73E8", "error": "#EA4335"}.get(track, "#9E9E9E")
+        track_color = {"hash": "#34A853", "fast": "#34A853", "deep": "#1A73E8", "error": "#EA4335"}.get(track, "#9E9E9E")
         badge_color = {"icon": "#1A73E8", "button": "#34A853", "text": "#FBBC04"}.get(el_type, "#9E9E9E")
         sim_text = f" | 유사도 {sim:.0%}" if sim is not None else ""
 

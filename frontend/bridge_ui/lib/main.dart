@@ -3,13 +3,14 @@ import 'package:flutter/material.dart';
 import 'capture/capture_response.dart';
 import 'capture/capture_sender.dart';
 import 'capture/capture_service.dart';
+import 'capture/detected_ui_element.dart';
 import 'capture/extracted_element.dart';
 import 'overlay/freeze_overlay.dart';
 import 'overlay/trigger_button.dart';
 
 /// 개발 중 서버 주소. 실기기에서는 PC의 실제 IP를 입력하세요.
 /// 예: 'http://192.168.x.x:8000'
-const _serverUrl = 'http://192.168.45.3:8000'; // S23 실기기용 Windows WiFi IP
+const _serverUrl = 'http://192.168.45.95:8000'; // Windows WiFi IP
 
 void main() {
   runApp(const BridgeUIApp());
@@ -70,6 +71,9 @@ class _BridgeUIHomeState extends State<BridgeUIHome> {
   Future<CaptureResponse> _onElementExtracted(ExtractedElement element) =>
       _sender.send(element);
 
+  Future<List<DetectedUiElement>> _onDetect(Uint8List imageBytes) =>
+      _sender.detect(imageBytes);
+
   void _onDismiss() {
     setState(() {
       _frozenScreen = null;
@@ -86,6 +90,7 @@ class _BridgeUIHomeState extends State<BridgeUIHome> {
         imageBytes: _frozenScreen!,
         appPackage: _appPackage,
         appName: _appName,
+        onDetect: _onDetect,
         onElementExtracted: _onElementExtracted,
         onDismiss: _onDismiss,
       );

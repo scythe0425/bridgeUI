@@ -17,12 +17,14 @@ class ResultBubble extends StatelessWidget {
   });
 
   Color get _trackColor => switch (result.track) {
+        'hash' => const Color(0xFF34A853),
         'fast' => const Color(0xFF34A853),
         'deep' => const Color(0xFF1A73E8),
         _ => const Color(0xFF9AA0A6),
       };
 
   String get _trackLabel => switch (result.track) {
+        'hash' => '빠른 응답',
         'fast' => '빠른 응답',
         'deep' => 'AI 분석',
         _ => '오류',

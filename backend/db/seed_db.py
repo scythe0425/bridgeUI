@@ -48,10 +48,11 @@ class UIElement(NamedTuple):
 
     element_id: str      # 고유 식별자 (앱명_요소명)
     app: str             # 앱 이름 (한국어 표시명)
-    bbox: tuple          # (left, top, right, bottom) — 1080×2340 기준
+    bbox: tuple          # (left, top, right, bottom) — 1080×2340 기준. (0,0,0,0)이면 스킵
     element_type: str    # "icon" | "button" | "tab" | "text"
     label: str           # UI 요소 레이블 (한국어)
     description: str     # 노년층 친화적 목적 중심 설명 (2문장 이내)
+    screenshot: str = "" # 소속 스크린샷 파일명. 비어있으면 APP_CONFIG 첫 번째 사용
 
 
 # ─────────────────────────────────────────────
@@ -541,6 +542,256 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "내가 저장해 둔 장소 목록을 볼 수 있어요. "
         "집이나 자주 가는 곳을 여기서 빠르게 찾을 수 있어요.",
     ),
+
+    # ══════════════════════════════════════════════════════
+    # 길찾기 입력 화면 — naver_map_directions_7.png (도착지 입력)
+    # ══════════════════════════════════════════════════════
+    UIElement(
+        "navermap_dir_back",
+        "네이버지도",
+        (29, 117, 120, 218),
+        "icon",
+        "뒤로가기 ← 버튼",
+        "이전 화면으로 돌아가는 버튼이에요. "
+        "길찾기를 그만하고 지도로 돌아갈 때 눌러요.",
+        "naver_map_directions_7.png",
+    ),
+    UIElement(
+        "navermap_dir_to_input",
+        "네이버지도",
+        (40, 108, 920, 220),
+        "button",
+        "도착지 입력창",
+        "도착하고 싶은 곳을 입력하는 칸이에요. "
+        "눌러서 목적지 주소나 장소 이름을 입력하면 돼요.",
+        "naver_map_directions_7.png",
+    ),
+    UIElement(
+        "navermap_dir_my_location",
+        "네이버지도",
+        (192, 270, 368, 336),
+        "button",
+        "내 위치 버튼",
+        "지금 내가 있는 위치를 출발지로 자동으로 입력해 줘요. "
+        "현재 위치에서 출발할 때 눌러보세요.",
+        "naver_map_directions_7.png",
+    ),
+    UIElement(
+        "navermap_dir_map_select",
+        "네이버지도",
+        (658, 263, 963, 341),
+        "button",
+        "지도에서 선택 버튼",
+        "지도를 직접 눌러서 목적지를 고를 수 있어요. "
+        "정확한 주소를 모를 때 지도에서 눌러서 찾아요.",
+        "naver_map_directions_7.png",
+    ),
+    UIElement(
+        "navermap_dir_home_shortcut",
+        "네이버지도",
+        (41, 422, 175, 491),
+        "button",
+        "집 바로가기",
+        "미리 저장해 둔 집 주소로 빠르게 목적지를 설정해요. "
+        "집으로 돌아가는 경로를 찾을 때 눌러요.",
+        "naver_map_directions_7.png",
+    ),
+    UIElement(
+        "navermap_dir_recent_tab",
+        "네이버지도",
+        (65, 595, 147, 650),
+        "tab",
+        "최근검색 탭",
+        "최근에 찾아본 장소 목록을 볼 수 있어요. "
+        "전에 갔던 곳을 다시 찾을 때 편리해요.",
+        "naver_map_directions_7.png",
+    ),
+
+    # ══════════════════════════════════════════════════════
+    # 길찾기 교통수단 탭 — naver_map_directions_4.png (대중교통 경로)
+    # ══════════════════════════════════════════════════════
+    UIElement(
+        "navermap_dir_tab_walk",
+        "네이버지도",
+        (35, 671, 171, 752),
+        "tab",
+        "도보 탭",
+        "걸어서 목적지까지 가는 경로를 안내해요. "
+        "걸어가는 시간과 거리를 알 수 있어요.",
+        "naver_map_directions_4.png",
+    ),
+    UIElement(
+        "navermap_dir_tab_transit",
+        "네이버지도",
+        (168, 672, 337, 751),
+        "tab",
+        "대중교통 탭 (길찾기)",
+        "버스나 지하철로 목적지까지 가는 방법을 안내해요. "
+        "환승 정보와 요금도 보여줘요.",
+        "naver_map_directions_4.png",
+    ),
+    UIElement(
+        "navermap_dir_tab_subway",
+        "네이버지도",
+        (332, 672, 541, 751),
+        "tab",
+        "지하철 탭",
+        "지하철로 목적지까지 가는 경로를 알려줘요. "
+        "몇 호선으로 갈아타야 하는지도 보여줘요.",
+        "naver_map_directions_4.png",
+    ),
+    UIElement(
+        "navermap_dir_tab_car",
+        "네이버지도",
+        (538, 671, 822, 751),
+        "tab",
+        "자동차 탭",
+        "자동차로 목적지까지 가는 경로를 안내해요. "
+        "예상 도착 시간과 주차 정보도 알 수 있어요.",
+        "naver_map_directions_4.png",
+    ),
+
+    # ══════════════════════════════════════════════════════
+    # 길 안내 시작 — naver_map_directions_5.png (경로 지도뷰)
+    # ══════════════════════════════════════════════════════
+    UIElement(
+        "navermap_dir_start",
+        "네이버지도",
+        (536, 1795, 1026, 2122),
+        "button",
+        "안내시작 버튼",
+        "선택한 경로로 길 안내를 시작해요. "
+        "이 버튼을 누르면 목소리로 길을 알려줘요.",
+        "naver_map_directions_5.png",
+    ),
+    UIElement(
+        "navermap_dir_later_depart",
+        "네이버지도",
+        (36, 1816, 271, 1876),
+        "button",
+        "나중에 출발 버튼",
+        "지금 바로 출발하지 않고 나중에 떠날 시간을 정할 수 있어요. "
+        "예상 도착 시간을 미리 확인할 때 써요.",
+        "naver_map_directions_5.png",
+    ),
+
+    # ══════════════════════════════════════════════════════
+    # 장소 상세 화면 — naver_map_detail.png (GS25)
+    # ══════════════════════════════════════════════════════
+    UIElement(
+        "navermap_detail_depart",
+        "네이버지도",
+        (43, 1654, 254, 1774),
+        "button",
+        "출발 버튼",
+        "이 장소를 출발지로 설정하여 길을 찾을 수 있어요. "
+        "여기서 출발하는 경로를 바로 검색할 때 눌러요.",
+        "naver_map_detail.png",
+    ),
+    UIElement(
+        "navermap_detail_arrive",
+        "네이버지도",
+        (257, 1654, 468, 1774),
+        "button",
+        "도착 버튼",
+        "이 장소까지 어떻게 가는지 길 안내를 받을 수 있어요. "
+        "누르면 출발지를 입력하는 화면이 나와요.",
+        "naver_map_detail.png",
+    ),
+    UIElement(
+        "navermap_detail_share",
+        "네이버지도",
+        (473, 1653, 692, 1775),
+        "button",
+        "공유 버튼",
+        "이 장소 정보를 가족이나 지인에게 보낼 수 있어요. "
+        "만날 장소를 알려줄 때 사용해요.",
+        "naver_map_detail.png",
+    ),
+    UIElement(
+        "navermap_detail_map_layer",
+        "네이버지도",
+        (910, 313, 1051, 452),
+        "button",
+        "지도 레이어 버튼",
+        "지도 종류를 바꿀 수 있어요. "
+        "위성사진이나 스트리트뷰 등으로 바꿔서 볼 수 있어요.",
+        "naver_map_detail.png",
+    ),
+    UIElement(
+        "navermap_detail_bookmark",
+        "네이버지도",
+        (911, 462, 1052, 597),
+        "button",
+        "즐겨찾기 ★ 버튼",
+        "이 장소를 즐겨찾기에 저장할 수 있어요. "
+        "저장해두면 다음에 바로 찾기 쉬워요.",
+        "naver_map_detail.png",
+    ),
+    UIElement(
+        "navermap_detail_pin",
+        "네이버지도",
+        (911, 613, 1050, 751),
+        "button",
+        "위치 저장 📌 버튼",
+        "현재 보고 있는 장소를 내 장소로 저장할 수 있어요. "
+        "나중에 다시 찾고 싶은 곳을 저장해 보세요.",
+        "naver_map_detail.png",
+    ),
+    UIElement(
+        "navermap_detail_cur_location",
+        "네이버지도",
+        (908, 1025, 1051, 1163),
+        "button",
+        "현위치 ◎ 버튼",
+        "지금 내가 있는 위치로 지도를 이동해요. "
+        "누르면 현재 위치가 화면 가운데에 나와요.",
+        "naver_map_detail.png",
+    ),
+
+    # ══════════════════════════════════════════════════════
+    # 장소 상세 화면 — naver_map_detail_2.png (경희대, 전화 버튼 포함)
+    # ══════════════════════════════════════════════════════
+    UIElement(
+        "navermap_detail_depart_v2",
+        "네이버지도",
+        (43, 1578, 254, 1704),
+        "button",
+        "출발 버튼 (v2)",
+        "이 장소를 출발지로 설정하여 길을 찾을 수 있어요. "
+        "여기서 출발하는 경로를 바로 검색할 때 눌러요.",
+        "naver_map_detail_2.png",
+    ),
+    UIElement(
+        "navermap_detail_arrive_v2",
+        "네이버지도",
+        (257, 1579, 468, 1700),
+        "button",
+        "도착 버튼 (v2)",
+        "이 장소까지 어떻게 가는지 길 안내를 받을 수 있어요. "
+        "누르면 출발지를 입력하는 화면이 나와요.",
+        "naver_map_detail_2.png",
+    ),
+    UIElement(
+        "navermap_detail_share_v2",
+        "네이버지도",
+        (473, 1578, 693, 1702),
+        "button",
+        "공유 버튼 (v2)",
+        "이 장소 정보를 가족이나 지인에게 보낼 수 있어요. "
+        "만날 장소를 알려줄 때 사용해요.",
+        "naver_map_detail_2.png",
+    ),
+    UIElement(
+        "navermap_detail_call",
+        "네이버지도",
+        (696, 1578, 917, 1707),
+        "button",
+        "전화 버튼",
+        "이 장소에 바로 전화를 걸 수 있어요. "
+        "영업 시간이나 예약을 확인하고 싶을 때 눌러요.",
+        "naver_map_detail_2.png",
+    ),
 ]
 
 # ─────────────────────────────────────────────
@@ -751,10 +1002,29 @@ KORAIL_ELEMENTS: list[UIElement] = [
 # 앱 → (스크린샷 파일명, 패키지명, 요소 목록) 매핑
 # 패키지명은 adb shell pm list packages | grep -i <앱> 으로 확인 가능
 # ─────────────────────────────────────────────
-APP_CONFIG: dict[str, tuple[str, str, list[UIElement]]] = {
-    "baemin":    ("baemin.png",    "com.baemin.android",   BAEMIN_ELEMENTS),
-    "naver_map": ("naver_map.png", "com.nhn.android.nmap", NAVER_MAP_ELEMENTS),
-    "korail":    ("korail.png",    "mobi.korail.Talk",     KORAIL_ELEMENTS),
+APP_CONFIG: dict[str, tuple[list[str], str, list[UIElement]]] = {
+    "baemin": (
+        ["baemin.png"],
+        "com.baemin.android",
+        BAEMIN_ELEMENTS,
+    ),
+    "naver_map": (
+        [
+            "naver_map.png",             # 메인 홈 화면
+            "naver_map_directions_4.png", # 대중교통 경로 결과 (교통수단 탭)
+            "naver_map_directions_5.png", # 경로 지도뷰 + 안내시작 버튼
+            "naver_map_directions_7.png", # 길찾기 도착지 입력 화면
+            "naver_map_detail.png",       # 장소 상세 (GS25, 출발/도착/공유)
+            "naver_map_detail_2.png",     # 장소 상세 (경희대, 전화 버튼 추가)
+        ],
+        "com.nhn.android.nmap",
+        NAVER_MAP_ELEMENTS,
+    ),
+    "korail": (
+        ["korail.png"],
+        "mobi.korail.Talk",
+        KORAIL_ELEMENTS,
+    ),
 }
 
 
@@ -806,53 +1076,92 @@ def image_to_bytes(img: Image.Image) -> bytes:
 
 def seed_app(
     app_key: str,
-    screenshot_path: Path,
+    screenshots_dir: Path,
     app_package: str,
+    filenames: list[str],
     elements: list[UIElement],
     collection,
-    full_bytes: bytes,
     dry_run: bool = False,
 ) -> tuple[int, int]:
     """단일 앱의 UI 요소를 YOLO 크롭 방식으로 ChromaDB에 저장합니다.
 
-    수동 bbox를 크롭 영역으로 사용하여 detect_from_full_screenshot()을 호출합니다.
-    YOLO가 영역 내 UI 요소를 탐지하면 그 bbox로 정밀 크롭하고,
-    탐지 실패 시 수동 bbox 크롭으로 fallback합니다.
+    요소별 UIElement.screenshot 필드로 소속 스크린샷을 결정하며,
+    비어있으면 filenames[0] (기본 스크린샷)을 사용합니다.
+    bbox가 (0,0,0,0)인 요소는 스크린샷 추가 대기 상태로 스킵합니다.
 
     Args:
         app_key: 앱 식별자 ("baemin" 등).
-        screenshot_path: 스크린샷 PNG 경로.
+        screenshots_dir: 스크린샷 파일이 있는 디렉터리.
         app_package: 앱 패키지명 (예: "com.baemin.android").
+        filenames: 앱의 스크린샷 파일명 목록 (첫 번째가 기본값).
         elements: UIElement 목록.
         collection: ChromaDB 컬렉션 객체.
-        full_bytes: 전체 스크린샷 PNG 바이트 (YOLO 탐지용).
         dry_run: True이면 임베딩/저장 없이 목록만 출력.
 
     Returns:
         (성공 수, 실패 수) 튜플.
     """
-    img = Image.open(screenshot_path).convert("RGB")
-    src_w, src_h = img.size
+    default_filename = filenames[0]
+    app_name = elements[0].app if elements else app_key
+
     print(f"\n{'='*60}")
-    print(f"  앱: {elements[0].app}  ({len(elements)}개 요소)")
-    print(f"  파일: {screenshot_path.name} ({src_w}×{src_h})  |  패키지: {app_package}")
+    print(f"  앱: {app_name}  ({len(elements)}개 요소, 스크린샷 {len(filenames)}장)")
+    print(f"  패키지: {app_package}")
     print(f"{'='*60}")
 
-    yolo_count, manual_count = 0, 0
+    # 스크린샷 캐시: 파일명 → (Path, bytes) 또는 None
+    _cache: dict[str, tuple[Path, bytes] | None] = {}
+
+    def load_screenshot(fn: str) -> tuple[Path, bytes] | None:
+        if fn in _cache:
+            return _cache[fn]
+        path = screenshots_dir / fn
+        if not path.exists():
+            alt = path.with_suffix(".jpg")
+            if alt.exists():
+                path = alt
+            else:
+                _cache[fn] = None
+                return None
+        with open(path, "rb") as f:
+            _cache[fn] = (path, f.read())
+        return _cache[fn]
+
+    yolo_count, manual_count, skip_count = 0, 0, 0
     ok, fail = 0, 0
 
     for elem in elements:
-        scaled = scale_bbox(elem.bbox, src_w, src_h)
-        x1, y1, x2, y2 = scaled
         label_str = f"  [{elem.element_type:6s}] {elem.label}"
 
+        # bbox (0,0,0,0): 스크린샷 추가 대기 → 스킵
+        if elem.bbox == (0, 0, 0, 0):
+            fn = elem.screenshot or default_filename
+            print(f"{label_str}  ⏭  bbox 미설정 ({fn} 추가 후 입력)")
+            skip_count += 1
+            ok += 1
+            continue
+
+        # 소속 스크린샷 로드
+        fn = elem.screenshot if elem.screenshot else default_filename
+        loaded = load_screenshot(fn)
+
+        if loaded is None:
+            print(f"{label_str}  ✗  스크린샷 없음 ({fn})")
+            fail += 1
+            continue
+
+        screenshot_path, full_bytes = loaded
+        img = Image.open(io.BytesIO(full_bytes)).convert("RGB")
+        src_w, src_h = img.size
+        scaled = scale_bbox(elem.bbox, src_w, src_h)
+        x1, y1, x2, y2 = scaled
+
         if dry_run:
-            print(f"{label_str}  →  bbox={scaled}")
+            print(f"{label_str}  →  bbox={scaled}  ({fn})")
             ok += 1
             continue
 
         try:
-            # YOLO 크롭: 수동 bbox를 크롭 영역으로 전달 → 중심거리 최소 박스 선택
             detection = detect_from_full_screenshot(full_bytes, x1, y1, x2, y2)
             img_bytes = detection["element_image_bytes"]
 
@@ -868,20 +1177,20 @@ def seed_app(
             embedding = embed_image(img_bytes)
             ph = phash_compute(img_bytes)
 
-            # upsert: 동일 element_id 재실행 시 덮어씀
             collection.upsert(
                 ids=[elem.element_id],
                 embeddings=[embedding],
                 metadatas=[{
-                    "app_package":    app_package,
-                    "app_name":       elem.app,
-                    "element_type":   elem.element_type,
-                    "label":          elem.label,
-                    "description":    elem.description,
-                    "bbox_ref":       str(elem.bbox),
-                    "phash":          phash_to_str(ph),
-                    "source":         "seed",
-                    "crop_method":    crop_method,
+                    "app_package":  app_package,
+                    "app_name":     elem.app,
+                    "element_type": elem.element_type,
+                    "label":        elem.label,
+                    "description":  elem.description,
+                    "bbox_ref":     str(elem.bbox),
+                    "phash":        phash_to_str(ph),
+                    "source":       "seed",
+                    "crop_method":  crop_method,
+                    "screenshot":   fn,
                 }],
                 documents=[elem.description],
             )
@@ -893,7 +1202,10 @@ def seed_app(
             fail += 1
 
     if not dry_run:
-        print(f"\n  YOLO 크롭: {yolo_count}개  |  수동 fallback: {manual_count}개")
+        print(
+            f"\n  YOLO 크롭: {yolo_count}개  |  수동 fallback: {manual_count}개"
+            f"  |  스킵(bbox 미설정): {skip_count}개"
+        )
     return ok, fail
 
 
@@ -921,25 +1233,10 @@ def run_seed(screenshots_dir: Path, dry_run: bool = False) -> None:
         print(f"현재 ChromaDB 저장 수: {collection.count()}개")
 
     total_ok, total_fail = 0, 0
-    for app_key, (filename, app_package, elements) in APP_CONFIG.items():
-        # .png 없으면 .jpg 폴백
-        screenshot_path = screenshots_dir / filename
-        if not screenshot_path.exists():
-            alt = screenshot_path.with_suffix(".jpg")
-            if alt.exists():
-                screenshot_path = alt
-            else:
-                print(f"\n  ✗  스크린샷 없음 → 건너뜁니다: {filename}")
-                total_fail += len(elements)
-                continue
-
-        # 전체 스크린샷 바이트 (YOLO 탐지용 — 앱별 1회 로드)
-        with open(screenshot_path, "rb") as f:
-            full_bytes = f.read()
-
+    for app_key, (filenames, app_package, elements) in APP_CONFIG.items():
         ok, fail = seed_app(
-            app_key, screenshot_path, app_package, elements,
-            collection, full_bytes, dry_run,
+            app_key, screenshots_dir, app_package, filenames, elements,
+            collection, dry_run,
         )
         total_ok += ok
         total_fail += fail

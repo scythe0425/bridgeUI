@@ -84,13 +84,13 @@ def resolve_screenshot(filename: str) -> Path | None:
 def check_screenshots() -> bool:
     """스크린샷 3장이 모두 있는지 확인합니다."""
     ok = True
-    for app_key, (filename, _, _) in APP_CONFIG.items():
-        path = resolve_screenshot(filename)
+    for app_key, (filenames, _, _) in APP_CONFIG.items():
+        path = resolve_screenshot(filenames[0])
         if path:
             size_kb = path.stat().st_size // 1024
             print(c(f"  ✓ {path.name} ({size_kb}KB)", "green"))
         else:
-            print(c(f"  ✗ {filename} — 없음", "red"))
+            print(c(f"  ✗ {filenames[0]} — 없음", "red"))
             ok = False
     return ok
 
@@ -247,8 +247,8 @@ def main() -> None:
         "korail":    "코레일",
     }
 
-    for app_key, (filename, app_package, _) in APP_CONFIG.items():
-        screenshot_path = resolve_screenshot(filename)
+    for app_key, (filenames, app_package, _) in APP_CONFIG.items():
+        screenshot_path = resolve_screenshot(filenames[0])
         sample_ids = SAMPLE_ELEMENTS.get(app_key, [])
         name = app_names.get(app_key, app_key)
 
