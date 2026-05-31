@@ -8,13 +8,14 @@
 
 - **프로젝트명**: bridgeUI (Senior UI-Guide Plugin)
 - **부제**: 디지털 기호(Icon) 장벽 해소를 위한 실시간 UI 번역 플러그인 구현 — 노년층 디지털 리터러시
-- **현재 상태**: 6월 진행 중 — 3단계 캐시 파이프라인(pHash→CLIP→Claude Vision) + seed DB(71개) + 말풍선 UI + TTS 완성, Step 10 (최적화·성과 분석) 예정
+- **현재 상태**: 6월 진행 중 — 3단계 캐시 파이프라인(pHash→CLIP→Claude Vision) + seed DB(94개) + YOLO 기반 UI 선택 오버레이 + 말풍선 UI 완성, Step 10 (최적화·성과 분석) 예정
 - **목적**: 지도 앱 등 복잡한 UI를 가진 앱에서 노년층 사용자가 특정 아이콘이나 버튼의 기능을 직관적으로 이해할 수 있도록 돕는 보조 도구.
 - **핵심 가치**:
-  - **접근성**: 시각적 하이라이트와 음성 안내(TTS) 제공.
+  - **접근성**: 시각적 하이라이트 + 말풍선 설명 제공. (TTS 제거됨)
   - **효율성**: 동일 이미지는 pHash로 <1ms 응답 (Stage 1), 유사 이미지는 CLIP으로 ~80ms 응답 (Stage 2).
   - **유연성**: 신규 UI는 Claude Vision으로 실시간 분석 후 자동 캐싱 (Stage 3 Deep Track).
   - **정확성**: 앱 패키지명 컨텍스트로 동일 아이콘의 앱별 의미 차이를 정확히 구분.
+  - **명확성**: /detect로 YOLO가 인식한 UI만 파란 테두리로 표시 → 사용자가 직접 선택.
 
 ---
 
@@ -47,14 +48,17 @@ Claude는 코드 작성 전 현재 단계를 확인하고, 해당 단계 범위 
 사용자 → 플러그인(오버레이) → 백엔드 서버 → Vector DB → VLM 모델
   ①  플러그인 버튼 터치 (트리거)
   ②  UsageStatsManager → 직전 포그라운드 앱 패키지명 수집 (app_package, app_name)
-  ③  화면 Freeze + Dimming
-  ④  사용자: 분석할 아이콘/영역 탭
+  ③  화면 Freeze
+      └─ [백그라운드] 전체 스크린샷 → POST /detect (YOLO 탐지만, 사용자 몰래)
+  ④  사용자: 분석할 영역을 탭 → 크롭 박스 생성
   ⑤  크롭 영역 드래그 조절 (이동 + 리사이즈)
-  ⑥  전체 스크린샷 바이트 + 크롭 좌표(물리px) 추출 + app_package/app_name 메타데이터 첨부
-  ⑦  로딩 UI 표시 ("잠시만 기다려주세요")
-  ⑧  서버로 분석 요청 (full_image 전체 스크린샷 + crop_x1/y1/x2/y2 + app_package + app_name)
-  ⑨  OmniParser YOLOv8 → 전체 화면 탐지(conf 0.05) → 크롭 영역 내 완전 포함 박스 선택
-      └─ 선택 우선순위: ① 완전 포함(conf 최고) → ② 부분 겹침(overlap×conf 최고) → ③ 사용자 크롭 fallback
+  ⑥  "UI 찾기" 버튼 탭 → /detect 결과 수신 (③번 동안 이미 완료)
+      └─ 크롭 영역 내 YOLO 탐지 UI에만 파란 테두리 오버레이
+  ⑦  사용자: 파란 테두리 UI 직접 탭 (명확한 버튼·아이콘만 선택 가능)
+  ⑧  서버로 분석 요청 POST /capture
+      (full_image 전체 스크린샷 + crop_x1/y1/x2/y2(=YOLO bbox) + app_package + app_name)
+  ⑨  OmniParser YOLOv8 → 전체 화면 탐지(conf 0.05) → 크롭 영역 내 중심거리 최소 박스 선택
+      └─ fallback: YOLO 탐지 없으면 사용자 크롭 좌표 직접 사용
   ⑩  Stage 1 — pHash (Perceptual Hash): 해밍 거리 ≤ 8 → 즉시 반환 (<1ms, track: "hash")
       └─ 캐시 미스 → CLIP 임베딩 생성 (512차원 벡터)
   ⑪  Stage 2 — CLIP 유사도: app_package 필터 코사인 ≥ 0.90 → 반환 (~80ms, track: "fast")
@@ -64,8 +68,8 @@ Claude는 코드 작성 전 현재 단계를 확인하고, 해당 단계 범위 
   ⑬  설명 텍스트 생성 + ChromaDB 저장 (pHash·CLIP·description 모두 저장)
       + 인메모리 pHash 스토어 즉시 등록 (다음 요청부터 Stage 1 히트 가능)
   ⑭  최종 JSON 응답 { track, description, element_type, confidence, similarity, hamming, app_name }
-  ⑯  말풍선 UI 표시 + TTS 음성 안내 (✅ 9단계 완료)
-  ⑰  닫기 버튼 → 원래 화면 복귀
+  ⑮  말풍선 UI 표시 (track 배지 + 설명 텍스트)
+  ⑯  닫기 버튼 → 크롭 초기화 → 다시 선택 가능
 ```
 
 ---
@@ -219,13 +223,13 @@ ChromaDB collection: ui_elements
 
 **구현 파일**: `backend/db/seed_db.py` ✅
 
-**사전 구축 대상 (총 71개 UI 요소)**
+**사전 구축 대상 (총 94개 UI 요소)**
 
 | 앱 | 요소 수 | 주요 포함 항목 |
 |----|---------|---------------|
-| 배달의민족 | 33개 | 헤더 아이콘 4종, 검색창, 프로모션 배너, 탭 5종, 음식카테고리 10종, 편의점 5종, 하단 탭바 5종, 팝업 닫기 등 |
-| 네이버지도 | 17개 | 검색창, 길찾기 버튼, 카테고리 칩 4종, 지도 버튼 4종 (레이어·즐겨찾기·위치저장·현위치), 하단 탭바 5종 |
-| 코레일 | 21개 | 헤더 아이콘 3종, 승차권 입력 전체 (교환·출발·도착·날짜·인원·간편구매·조회), 서비스 아이콘 4종, 하단 탭바 4종 등 |
+| 배달의민족 | 33개 | 헤더 아이콘 4종, 검색창, 탭 5종, 음식카테고리 10종, 편의점 5종, 하단 탭바 5종 등 |
+| 네이버지도 | 40개 | 홈(17) + 길찾기 입력(6) + 교통수단 탭(4) + 안내시작(2) + 장소상세 GS25(7) + 장소상세 경희대(4) |
+| 코레일 | 21개 | 헤더 아이콘 3종, 승차권 입력 전체, 서비스 아이콘 4종, 하단 탭바 4종 등 |
 
 **seed_db.py 핵심 구조**
 
@@ -233,25 +237,32 @@ ChromaDB collection: ui_elements
 class UIElement(NamedTuple):
     element_id: str      # 고유 식별자 (예: "baemin_nav_home")
     app: str             # 앱 이름
-    bbox: tuple          # (left, top, right, bottom) → 1080×2340 기준
+    bbox: tuple          # (left, top, right, bottom) → 1080×2340 기준. (0,0,0,0)이면 스킵
     element_type: str    # "icon" | "button" | "tab" | "text"
     label: str           # UI 요소 레이블 (한국어)
     description: str     # 노년층 친화적 목적 중심 설명 (2문장 이내)
+    screenshot: str = "" # 소속 스크린샷 파일명. 비어있으면 APP_CONFIG 첫 번째 사용
 
-APP_CONFIG = {
-    "baemin":    ("baemin.png",    "com.baemin.android",   BAEMIN_ELEMENTS),
-    "naver_map": ("naver_map.png", "com.nhn.android.nmap", NAVER_MAP_ELEMENTS),
-    "korail":    ("korail.png",    "mobi.korail.Talk",     KORAIL_ELEMENTS),
+APP_CONFIG: dict[str, tuple[list[str], str, list[UIElement]]] = {
+    "baemin":    (["baemin.png"], "com.baemin.android", BAEMIN_ELEMENTS),
+    "naver_map": (
+        ["naver_map.png", "naver_map_directions_4.png", "naver_map_directions_5.png",
+         "naver_map_directions_7.png", "naver_map_detail.png", "naver_map_detail_2.png"],
+        "com.nhn.android.nmap", NAVER_MAP_ELEMENTS,
+    ),
+    "korail":    (["korail.png"], "mobi.korail.Talk", KORAIL_ELEMENTS),
 }
 
 def scale_bbox(bbox, src_w, src_h, ref_w=1080, ref_h=2340) -> tuple:
     """다른 해상도 스크린샷도 자동 비율 변환."""
 
 def run_seed(screenshots_dir: Path, dry_run: bool = False) -> None:
-    """스크린샷 크롭 → CLIP 임베딩 → pHash 계산 → ChromaDB 저장 파이프라인."""
+    """스크린샷 크롭 → YOLO 정밀 탐지 → CLIP 임베딩 → pHash 계산 → ChromaDB upsert."""
 ```
 
-**시딩 파이프라인**: 스크린샷 크롭 → CLIP 임베딩(512차원) → pHash 계산(64비트) → ChromaDB 저장
+**시딩 파이프라인**: 전체 스크린샷 → YOLO 정밀 bbox 크롭 → CLIP 임베딩(512차원) → pHash 계산(64비트) → ChromaDB upsert
+- 요소별 `screenshot` 필드로 소속 스크린샷 결정 (앱당 여러 스크린샷 지원)
+- `bbox=(0,0,0,0)` 요소는 스크린샷 추가 대기 중으로 자동 스킵
 - 서버 시작 시 `load_from_collection()`이 저장된 pHash를 인메모리 스토어로 일괄 로드
 - seed된 요소는 첫 번째 요청부터 Stage 1(pHash) 히트 가능
 
@@ -260,11 +271,22 @@ def run_seed(screenshots_dir: Path, dry_run: bool = False) -> None:
 **스크린샷 배치 경로**
 ```
 backend/db/screenshots/
-  baemin.jpg      → 배달의민족 스크린샷 (1080×2340 권장, .png도 허용)
-  naver_map.jpg   → 네이버지도 스크린샷
-  korail.jpg      → 코레일 스크린샷
+  baemin.jpg                   → 배달의민족 홈 화면
+  naver_map.jpg                → 네이버지도 홈 화면
+  naver_map_directions_4.png   → 길찾기 교통수단 탭 화면
+  naver_map_directions_5.png   → 경로 지도뷰 + 안내시작 화면
+  naver_map_directions_7.png   → 길찾기 도착지 입력 화면
+  naver_map_detail.png         → 장소 상세 (GS25)
+  naver_map_detail_2.png       → 장소 상세 (경희대, 전화 버튼 포함)
+  korail.jpg                   → 코레일 홈 화면
 ```
-APP_CONFIG는 `.png` 파일명으로 정의되어 있으며, 파일이 없으면 `.jpg`로 자동 폴백됩니다.
+
+**bbox 좌표 탐색 도구**
+```bash
+# 스크린샷에서 YOLO 탐지 결과를 이미지로 시각화
+python tools/visualize_detections.py db/screenshots/naver_map.jpg
+# → tools/output/naver_map_detected.png 생성 + 터미널에 bbox 좌표 출력
+```
 
 ---
 
@@ -398,28 +420,28 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 ---
 
-### ✅ 9단계 — 결과 표시 UI + TTS (완료)
+### ✅ 9단계 — 결과 표시 UI (완료, TTS 제거됨)
 
-**시퀀스 ⑯ 담당**
+**시퀀스 ⑮ 담당**
 
 **구현 파일**
 - `overlay/result_bubble.dart` — 설명 말풍선 위젯 ✅
-- `tts/tts_service.dart` — flutter_tts 패키지 래퍼 ✅
 - `capture/capture_response.dart` — 백엔드 응답 모델 ✅
 
-**Flutter 연동 변경 사항**
+**Flutter 연동**
 - `CaptureSender.send()` → `Future<CaptureResponse>` 반환 (JSON 파싱 포함, timeout 30s)
-- `FreezeOverlay.onElementExtracted` → `Future<CaptureResponse> Function(ExtractedElement)` 비동기 콜백으로 변경
-- 결과 수신 후 `ResultBubble` 표시 + `TtsService.speak()` 동시 실행
-- 말풍선 닫기 버튼 탭 시 TTS 중단
+- `CaptureSender.detect()` → `Future<List<DetectedUiElement>>` 반환 (/detect 엔드포인트)
+- `FreezeOverlay`: 크롭 확정 후 /detect 결과로 탐지된 UI를 파란 테두리로 표시
+- 사용자가 UI 탭 → `onElementExtracted` 콜백 → `ResultBubble` 표시
+- 말풍선 닫기 시 크롭 초기화 → 다시 선택 가능
 
 **말풍선 UI 요건 (노년층 접근성) — 구현 완료**
 - 폰트 22sp, 고대비 흰 배경 + 짙은 텍스트
 - 화면 하단 1/3 고정 표시 (`Alignment(0, 0.72)`)
 - 닫기 버튼 터치 영역 56dp
 - track 배지: hash/fast=초록 (#34A853), deep=파랑 (#1A73E8), error=회색 (#9AA0A6)
-  - `capture_response.dart`의 `track` 필드는 `"hash"` / `"fast"` / `"deep"` / `"error"` 수신
-  - `result_bubble.dart`의 switch는 `"fast"`와 `"hash"` 모두 초록으로 표시
+
+**TTS 제거 이유**: 노년층 사용성 테스트 피드백 반영 — 말풍선 텍스트 직접 읽기 방식으로 전환
 
 ---
 
@@ -465,30 +487,31 @@ Android 설정 → 앱 → 특별한 앱 접근 권한 → 사용 정보 접근 
 ```bash
 cd backend
 
-# 최초 1회
+# 최초 1회: 가상환경 생성 및 의존성 설치
 python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.txt  # python-dotenv 포함
 
 # 최초 1회: OmniParser 가중치 다운로드
-python -c "from huggingface_hub import hf_hub_download; \
+venv/bin/python3 -c "from huggingface_hub import hf_hub_download; \
 hf_hub_download('microsoft/OmniParser-v2.0', 'icon_detect/model.pt', local_dir='weights')"
 
-# 환경 변수 설정 (Deep Track 사용 시 필수)
-export ANTHROPIC_API_KEY=sk-ant-...
+# 최초 1회: API 키 설정 (.env 파일 — gitignore 처리됨)
+echo 'ANTHROPIC_API_KEY=sk-ant-...' > .env
 
-# 최초 1회: ChromaDB 사전 구축 (스크린샷 3장을 db/screenshots/ 에 배치 후 실행)
-# 파일명: baemin.jpg / naver_map.jpg / korail.jpg (.png도 가능)
-python db/seed_db.py --dry_run   # 목록 미리 확인 (저장 없음)
-python db/seed_db.py             # 71개 요소 CLIP 임베딩 + pHash 저장
-curl http://localhost:8000/db/count  # 저장 수 확인 (71 이상이면 정상)
+# 최초 1회: ChromaDB 사전 구축 (스크린샷을 db/screenshots/ 에 배치 후 실행)
+venv/bin/python3 db/seed_db.py --dry_run   # 목록 미리 확인 (저장 없음)
+venv/bin/python3 db/seed_db.py             # 94개 요소 CLIP 임베딩 + pHash 저장
+curl http://localhost:8000/db/count        # 저장 수 확인 (94 이상이면 정상)
 
-# 캐시 파이프라인 테스트 (스크린샷 크롭 기반 Stage 1/2 히트 검증)
-python tests/run_full_test.py --skip_seed    # DB에 이미 데이터 있을 때
-python tests/run_full_test.py                # seed + 테스트 한 번에
+# YOLO 탐지 결과 시각화 (bbox 좌표 확인용)
+venv/bin/python3 tools/visualize_detections.py db/screenshots/naver_map.jpg
 
-# 서버 실행
-uvicorn main:app --host 0.0.0.0 --port 8000
+# 캐시 파이프라인 테스트
+venv/bin/python3 tests/run_full_test.py --skip_seed    # DB에 이미 데이터 있을 때
+venv/bin/python3 tests/run_full_test.py                # seed + 테스트 한 번에
+
+# 서버 실행 (가상환경 직접 경로 사용 — PATH 문제 우회)
+venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
 ---
@@ -503,11 +526,13 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 | 임베딩 | CLIP `clip-ViT-B-32` (sentence-transformers) |
 | VLM | Claude Vision (`claude-sonnet-4-6`) |
 | UI 탐지 | OmniParser YOLOv8 (`microsoft/OmniParser-v2.0`, nc=1, 전체 스크린샷 입력) ✅ |
+| UI 선택 UX | `/detect` → 크롭 내 YOLO 박스 파란 테두리 표시 → 사용자 직접 탭 ✅ |
 | 앱 context | Android `UsageStatsManager` (직전 포그라운드 앱 패키지명 수집) ✅ |
 | Stage 1 캐시 | pHash (`imagehash>=4.3.0`) — 인메모리 스토어, 해밍 거리 ≤ 8, <1ms ✅ |
-| DB 사전 구축 | `seed_db.py` — 3개 앱 71개 UI 요소 CLIP 임베딩 + pHash 사전 저장 ✅ |
-| TTS | flutter_tts 4.2.5 (한국어, 속도 0.45) ✅ |
-| 캡처 | Android MediaProjection API + Flutter MethodChannel |
+| DB 사전 구축 | `seed_db.py` — 3개 앱 94개 UI 요소 (다중 스크린샷 지원) ✅ |
+| 환경 변수 | `python-dotenv` — `backend/.env`에서 `ANTHROPIC_API_KEY` 자동 로드 ✅ |
+| 캡처 | Android MediaProjection API + ServiceConnection (Android 16 대응) ✅ |
+| 탐지 시각화 | `tools/visualize_detections.py` — YOLO bbox 시각화 및 seed bbox 탐색 ✅ |
 
 ---
 
@@ -519,31 +544,26 @@ bridgeUI/
 │   └── bridge_ui/
 │       ├── lib/
 │       │   ├── capture/
-│       │   │   ├── capture_model.dart       # CaptureResult 모델
 │       │   │   ├── capture_response.dart    # CaptureResponse 모델 (track, description, ...)
-│       │   │   ├── capture_sender.dart      # 백엔드 POST 전송 → CaptureResponse 반환
+│       │   │   ├── capture_sender.dart      # send() + detect() — /capture·/detect 전송
 │       │   │   ├── capture_service.dart     # MediaProjection + getForegroundApp() MethodChannel
+│       │   │   ├── detected_ui_element.dart # DetectedUiElement 모델 (/detect 응답 bbox)
 │       │   │   ├── element_extractor.dart   # dp→px 변환 + 크롭
-│       │   │   ├── extracted_element.dart   # ExtractedElement 모델 (appPackage, appName 포함)
-│       │   │   └── ui_scanner.dart          # 탭 위치 기반 영역 추정
+│       │   │   └── extracted_element.dart   # ExtractedElement 모델 (fullScreenshotBytes 포함)
 │       │   ├── overlay/
-│       │   │   ├── freeze_overlay.dart      # 크롭 셀렉터 UI → CaptureResponse 콜백
+│       │   │   ├── freeze_overlay.dart      # /detect 백그라운드 → 파란테두리 UI 선택 오버레이
 │       │   │   ├── trigger_button.dart      # 캡처 트리거 버튼
 │       │   │   └── result_bubble.dart       # 분석 결과 말풍선 (22sp, 56dp 닫기)
-│       │   ├── tts/
-│       │   │   └── tts_service.dart         # flutter_tts 래퍼 (한국어 0.45 속도)
-│       │   └── main.dart                    # 트리거 시 getForegroundApp() 호출
+│       │   └── main.dart                    # onDetect + onElementExtracted 콜백 연결
 │       └── android/
-│           ├── app/src/main/AndroidManifest.xml  # PACKAGE_USAGE_STATS 권한
-│           └── .../MainActivity.kt               # MediaProjection + UsageStatsManager
+│           ├── app/src/main/AndroidManifest.xml       # PACKAGE_USAGE_STATS + FOREGROUND_SERVICE_MEDIA_PROJECTION
+│           ├── .../MainActivity.kt                    # ServiceConnection 기반 MediaProjection (Android 16 대응)
+│           └── .../MediaProjectionForegroundService.kt # FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
 ├── backend/
 │   ├── db/
 │   │   ├── chroma_store.py                  # ChromaDB 싱글턴
-│   │   ├── seed_db.py                       # ✅ 6-1단계: 3개 앱 71개 UI 요소 사전 구축
+│   │   ├── seed_db.py                       # ✅ 3개 앱 94개 UI 요소 사전 구축 (다중 스크린샷)
 │   │   └── screenshots/                     # seed용 스크린샷 배치 디렉터리 (gitignore)
-│   │       ├── baemin.jpg                   # 배달의민족 스크린샷 (.png도 허용)
-│   │       ├── naver_map.jpg                # 네이버지도 스크린샷
-│   │       └── korail.jpg                   # 코레일 스크린샷
 │   ├── pipeline/
 │   │   ├── embedder.py                      # CLIP 임베딩 (512차원, warmup 포함)
 │   │   ├── ui_detector.py                   # ✅ OmniParser YOLOv8 Phase 3 (전체 스크린샷 기반)
@@ -552,11 +572,14 @@ bridgeUI/
 │   │   └── deep_track.py                    # ✅ Stage 3: Claude Vision 설명 생성 + ChromaDB 캐싱
 │   ├── tests/
 │   │   ├── test_detector.py                 # OmniParser 탐지 능력 진단 스크립트
-│   │   ├── test_cache_pipeline.py           # ✅ 3단계 파이프라인 단위 테스트 CLI
+│   │   ├── test_stage2.py                   # Stage 2 CLIP 유사도 히트 검증
 │   │   └── run_full_test.py                 # ✅ 스크린샷 기반 통합 테스트 (seed + Stage 검증)
+│   ├── tools/
+│   │   └── visualize_detections.py          # YOLO 탐지 시각화 (bbox 좌표 탐색용)
 │   ├── weights/
 │   │   └── icon_detect/model.pt             # OmniParser YOLOv8 가중치 (gitignore)
-│   ├── main.py                              # FastAPI 엔드포인트 (3단계 캐시 파이프라인)
+│   ├── .env                                 # ANTHROPIC_API_KEY (gitignore)
+│   ├── main.py                              # FastAPI: /capture + /detect + /db/count + /
 │   └── requirements.txt
 └── CLAUDE.md
 ```
@@ -574,6 +597,7 @@ bridgeUI/
 ### Backend (FastAPI)
 - Vector DB는 **ChromaDB** 사용. 컬렉션은 `get_collection()` 싱글턴으로만 접근할 것.
 - `/capture` 엔드포인트는 항상 `track`, `description`, `element_type`, `confidence`, `similarity`, `hamming`, `app_name` 필드를 포함한 JSON을 반환할 것.
+- `/detect` 엔드포인트는 YOLO 탐지만 수행하고 `elements` 배열을 반환할 것 (pHash/CLIP/Claude 호출 없음).
 - `/capture` 수신 시 `full_image`(전체 스크린샷) + `crop_x1/y1/x2/y2`가 있으면 `detect_from_full_screenshot()` 사용, `file`만 있으면 `detect_ui_element()` 구버전 폴백 사용.
 - `detect_from_full_screenshot()`이 반환한 `element_image_bytes`를 pHash·CLIP·Claude Vision 모두에 사용할 것 (사용자 크롭이 아님).
 - Deep Track 호출 실패 시 `"정보를 찾는 중입니다"` 메시지를 반환하고 에러를 노출하지 말 것.
@@ -581,10 +605,14 @@ bridgeUI/
 - Stage 1 (pHash) 검색도 `app_package` 필터를 적용할 것 (동일한 아이콘 형태의 오탐 방지).
 - Deep Track 저장 후 `phash_register()`로 인메모리 스토어에 즉시 등록할 것 (서버 재시작 없이 Stage 1 히트 가능).
 - 서버 시작 시 `lifespan`에서 `phash_load(collection)`으로 기존 pHash를 일괄 로드할 것.
+- `ANTHROPIC_API_KEY`는 `backend/.env` 파일로 관리할 것. `main.py` 상단에서 `load_dotenv()` 호출.
 
 ### seed_db 유지보수
-- 앱 추가 시 `UIElement` 목록과 `APP_CONFIG` 딕셔너리에 항목 추가.
+- 요소 추가 시 `UIElement` 목록의 `screenshot` 필드에 소속 스크린샷 파일명 지정.
+- 앱 추가/스크린샷 추가 시 `APP_CONFIG`의 `list[str]` 파일명 목록도 함께 업데이트.
+- `bbox=(0,0,0,0)`으로 추가하면 스크린샷 없이도 정의 가능 (시딩 시 자동 스킵).
 - 좌표 기준은 1080×2340px. 다른 해상도 스크린샷은 `scale_bbox()`가 자동 변환.
+- `tools/visualize_detections.py`로 스크린샷 YOLO 탐지 결과를 먼저 확인 후 bbox 입력.
 - `--dry_run` 플래그로 실제 저장 없이 bbox 좌표를 먼저 검증할 것.
 - `screenshots/` 디렉터리는 `.gitignore`에 추가 권장 (개인정보 포함 가능).
 
@@ -640,9 +668,12 @@ def analyze_ui_element(image: bytes, metadata: dict) -> dict:
 - [ ] Deep Track 저장 후 `phash_register()`로 인메모리 스토어에 즉시 등록하는가?
 - [ ] 프론트엔드 성능(FPS)과 노년층 접근성(폰트 18sp+, 대비, 터치 56dp+)이 고려되었는가?
 - [ ] `/capture` 응답이 `track`, `description`, `element_type`, `confidence`, `similarity`, `hamming`, `app_name` 필드를 포함하는가?
+- [ ] `/detect` 응답이 `elements` 배열과 `image_width`, `image_height`를 포함하는가?
 - [ ] 5-1단계 탐지 결과(`element_type`)가 Deep Track 프롬프트 컨텍스트로 전달되는가?
 - [ ] `/capture`가 `full_image` 수신 시 `detect_from_full_screenshot()`을 호출하는가?
 - [ ] pHash·CLIP·Claude Vision에 사용자 크롭이 아닌 `element_image_bytes`(YOLO 추출)를 사용하는가?
-- [ ] 전체 스크린샷 전송 시 `fullScreenshotBytes`와 `cropPx*` 좌표가 `ExtractedElement`에 포함되는가?
-- [ ] seed_db 대상 앱의 새 요소 추가 시 `UIElement` 목록과 `APP_CONFIG`를 모두 업데이트하는가?
+- [ ] `ExtractedElement`에 `fullScreenshotBytes`와 `cropPx*` 좌표가 모두 포함되어 있는가?
+- [ ] seed_db 요소 추가 시 `UIElement.screenshot` 필드와 `APP_CONFIG` 파일 목록을 모두 업데이트하는가?
 - [ ] ChromaDB 메타데이터에 `phash` 필드가 포함되어 있는가?
+- [ ] Android 16 대응: `MediaProjectionForegroundService`가 `ServiceConnection.onServiceConnected`에서 시작되는가?
+- [ ] `ANTHROPIC_API_KEY`가 `backend/.env`로 관리되고 코드에 직접 삽입되지 않는가?

@@ -15,7 +15,7 @@
 | 5 | ImageCapture API 연동 및 데이터 추출·전송 | | ✅ | | |
 | 5-1 | 전체 화면 기반 UI/아이콘 요소 탐지 (OmniParser YOLOv8) | | | ✅ | |
 | 6 | Vector DB (ChromaDB) 환경 구축 + CLIP 임베딩 저장 | | | ✅ | |
-| 6-1 | ChromaDB 사전 구축 — 3개 앱 71개 UI 요소 seed | | | ✅ | |
+| 6-1 | ChromaDB 사전 구축 — 3개 앱 94개 UI 요소 seed (다중 스크린샷) | | | ✅ | |
 | 7 | 3단계 캐시 파이프라인 구현 (pHash → CLIP → Deep Track) | | | ✅ | |
 | 8 | Deep Track (Claude Vision) 추론 엔진 연동 | | | ✅ | |
 | 9 | 가이드 UI (말풍선) 및 TTS 시스템 통합 | | | | ✅ |
@@ -30,16 +30,17 @@
 ```
 ①  플러그인 버튼 터치 (트리거)
 ②  UsageStatsManager → 직전 포그라운드 앱 패키지명 + 이름 수집
-③  화면 Freeze + Dimming
-④  사용자: 분석할 아이콘/영역 탭 → 크롭 영역 드래그 조절
-⑤  전체 스크린샷 + 크롭 좌표(물리px) 추출
-⑥  서버로 분석 요청 (전체 스크린샷 + 크롭 좌표 + 앱 정보)
-⑦  OmniParser YOLOv8 → 전체 화면 탐지 → 크롭 영역 내 최적 요소 선택
-⑧  Stage 1 pHash: 해밍 거리 ≤ 8 → 즉시 반환 (<1ms)
-⑨  Stage 2 CLIP: 코사인 유사도 ≥ 0.90 → 반환 (~80ms)
-⑩  Stage 3 Claude Vision: 신규 설명 생성 + ChromaDB 자동 캐싱
-⑪  최종 결과 JSON 반환 { track, description, element_type, ... }
-⑫  말풍선 UI 표시 + TTS 음성 안내
+③  화면 Freeze → [백그라운드] 전체 스크린샷 → POST /detect (YOLO 탐지만)
+④  사용자: 영역 탭 → 크롭 박스 생성 → 드래그 조절
+⑤  "UI 찾기" 버튼 탭 → /detect 결과로 크롭 내 UI에 파란 테두리 오버레이
+⑥  사용자: 파란 테두리 UI 직접 탭
+⑦  POST /capture (전체 스크린샷 + YOLO bbox 좌표 + 앱 정보)
+⑧  OmniParser YOLOv8 → 전체 화면 탐지 → 크롭 영역 내 최적 요소 선택
+⑨  Stage 1 pHash: 해밍 거리 ≤ 8 → 즉시 반환 (<1ms)
+⑩  Stage 2 CLIP: 코사인 유사도 ≥ 0.90 → 반환 (~80ms)
+⑪  Stage 3 Claude Vision: 신규 설명 생성 + ChromaDB 자동 캐싱
+⑫  최종 결과 JSON 반환 { track, description, element_type, ... }
+⑬  말풍선 UI 표시
 ```
 
 ---
@@ -57,17 +58,18 @@
 ```bash
 cd backend
 
-# 최초 1회: 가상환경 생성
-python3 -m venv .venv
+# 최초 1회: 가상환경 생성 및 의존성 설치
+python3 -m venv venv
+venv/bin/pip install -r requirements.txt
 
-# 가상환경 활성화 (매번 서버 실행 전)
-source .venv/bin/activate
+# 최초 1회: API 키 설정
+echo 'ANTHROPIC_API_KEY=sk-ant-...' > .env
 
-# 최초 1회: 의존성 설치
-pip install -r requirements.txt
+# 최초 1회: ChromaDB 사전 구축
+venv/bin/python3 db/seed_db.py
 
-# 서버 실행
-uvicorn main:app --host 0.0.0.0 --port 8000
+# 서버 실행 (venv 경로 직접 지정 — PATH 문제 우회)
+venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
 브라우저에서 `http://localhost:8000` 접속 → 캡처 이미지 및 DB 저장 수가 2초마다 자동 갱신됩니다.
@@ -146,12 +148,14 @@ flutter run          # 연결된 기기에 자동 설치 및 실행
 | 1 | 분석할 앱(예: 네이버 지도) 실행 |
 | 2 | bridge_ui 앱으로 전환 → 하단 파란 버튼 탭 |
 | 3 | 시스템 팝업 **"화면 녹화 허용"** 승인 |
-| 4 | 화면이 프리즈되면 분석할 아이콘/영역을 탭 |
+| 4 | 화면이 프리즈되면 분석할 영역을 탭 (크롭 박스 생성) |
 | 5 | 크롭 영역을 드래그로 **이동** 또는 **모서리 핸들로 크기 조절** |
-| 6 | **"이 영역 전송"** 버튼 탭 |
-| 7 | 분석 완료 후 말풍선 UI + TTS 음성 안내 수신 |
+| 6 | **"UI 찾기"** 버튼 탭 → 크롭 내 탐지된 UI에 파란 테두리 표시 |
+| 7 | 파란 테두리 UI 중 알고 싶은 버튼/아이콘을 탭 |
+| 8 | 분석 완료 후 말풍선 UI로 설명 표시 |
 
 > 오른쪽 상단 **X 버튼**으로 오버레이를 닫고 홈으로 돌아갑니다.
+> 말풍선 닫기 버튼 탭 시 크롭이 초기화되어 다시 선택 가능합니다.
 
 ---
 
@@ -160,6 +164,7 @@ flutter run          # 연결된 기기에 자동 설치 및 실행
 | 메서드 | 경로 | 설명 |
 |--------|------|------|
 | `POST` | `/capture` | 전체 스크린샷 + 크롭 좌표 수신 → YOLO 탐지 → 3단계 캐시 파이프라인 → 설명 반환 |
+| `POST` | `/detect` | 전체 스크린샷 수신 → YOLO 탐지만 → bbox 목록 반환 (분석 없음) |
 | `GET` | `/` | 최신 캡처 이미지 뷰어 (2초 자동 갱신, track 배지 포함) |
 | `GET` | `/db/count` | ChromaDB 저장 항목 수 확인 |
 
@@ -167,7 +172,26 @@ flutter run          # 연결된 기기에 자동 설치 및 실행
 
 | 필드 | 타입 | 설명 |
 |------|------|------|
-| `full_image` | file | 전체 스크린샷 PNG (권장) |
-| `crop_x1/y1/x2/y2` | int | 크롭 영역 물리 픽셀 좌표 |
+| `full_image` | file | 전체 스크린샷 PNG |
+| `crop_x1/y1/x2/y2` | int | 크롭 영역 물리 픽셀 좌표 (YOLO bbox 좌표 직접 전달) |
 | `app_package` | string | 앱 패키지명 (예: `com.nhn.android.nmap`) |
 | `app_name` | string | 앱 표시 이름 (예: `네이버 지도`) |
+
+### `/detect` 요청 파라미터
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `full_image` | file | 전체 스크린샷 PNG |
+
+### `/detect` 응답
+
+```json
+{
+  "elements": [
+    {"x1": 22, "y1": 80, "x2": 826, "y2": 168, "conf": 0.80, "type": "button"},
+    {"x1": 938, "y1": 72, "x2": 1072, "y2": 172, "conf": 0.44, "type": "icon"}
+  ],
+  "image_width": 1080,
+  "image_height": 2340
+}
+```
