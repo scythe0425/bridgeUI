@@ -8,9 +8,8 @@ import 'capture/extracted_element.dart';
 import 'overlay/freeze_overlay.dart';
 import 'overlay/trigger_button.dart';
 
-/// 개발 중 서버 주소. 실기기에서는 PC의 실제 IP를 입력하세요.
-/// 예: 'http://192.168.x.x:8000'
-const _serverUrl = 'http://192.168.45.95:8000'; // Windows WiFi IP
+/// ADB reverse 터널링 사용 시 localhost:8000 → WSL2 서버 8000 포트로 자동 연결
+const _serverUrl = 'http://localhost:8001'; // ADB reverse: 기기 8001 → WSL2 8000
 
 void main() {
   runApp(const BridgeUIApp());

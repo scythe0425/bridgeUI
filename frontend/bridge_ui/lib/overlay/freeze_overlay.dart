@@ -187,7 +187,6 @@ class _FreezeOverlayState extends State<FreezeOverlay> {
 
   @override
   Widget build(BuildContext context) {
-    final topPad = MediaQuery.of(context).padding.top;
     final dpr = MediaQuery.of(context).devicePixelRatio;
 
     return Scaffold(
@@ -346,10 +345,10 @@ class _FreezeOverlayState extends State<FreezeOverlay> {
               onDismiss: _resetToScratch,
             ),
 
-          // ─────────── 닫기 버튼 ────────────────────────────────────
+          // ─────────── 닫기 버튼 (좌하단 — UI 선택 영역과 충돌 최소화) ──
           Positioned(
-            top: topPad + 12,
-            right: 16,
+            bottom: 32,
+            left: 16,
             child: _DismissButton(onDismiss: widget.onDismiss),
           ),
         ],

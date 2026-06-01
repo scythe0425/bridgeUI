@@ -27,6 +27,9 @@ from pipeline.deep_track import analyze as deep_analyze
 
 
 _latest_image_b64: str | None = None
+_latest_image_bytes: bytes | None = None      # 재분석용 element 원본 바이트
+_latest_full_image_bytes: bytes | None = None # 재분석용 전체 스크린샷 바이트
+_latest_doc_id: str | None = None             # ChromaDB 문서 ID (재분석 시 업데이트)
 _captured_at: str | None = None
 _latest_detection: dict | None = None
 _latest_response: dict | None = None
@@ -77,7 +80,7 @@ async def receive_capture(
     Returns:
         { track, description, element_type, confidence, similarity, hamming, app_name }
     """
-    global _latest_image_b64, _captured_at, _latest_detection, _latest_response
+    global _latest_image_b64, _latest_image_bytes, _latest_full_image_bytes, _latest_doc_id, _captured_at, _latest_detection, _latest_response
 
     _captured_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -95,9 +98,12 @@ async def receive_capture(
                 full_data, crop_x1, crop_y1, crop_x2, crop_y2
             )
             data = detection["element_image_bytes"]
+            _latest_full_image_bytes = full_data
         elif file is not None:
+            full_data = None
             data = await file.read()
             detection = detect_ui_element(data)
+            _latest_full_image_bytes = None
         else:
             return {
                 "track": "error",
@@ -110,9 +116,11 @@ async def receive_capture(
             }
 
         _latest_image_b64 = base64.b64encode(data).decode()
+        _latest_image_bytes = data
+        _latest_doc_id = None  # Deep Track 저장 시 갱신
         _latest_detection = detection
         element_type = detection["element_type"]
-        confidence = detection["confidence"]
+        confidence = float(detection["confidence"]) if detection["confidence"] is not None else None
 
         # STAGE 1: pHash — 해밍 거리 ≤ 8이면 즉시 반환 (<1ms)
         hash_result = hash_search(data, app_package=app_package)
@@ -123,7 +131,7 @@ async def receive_capture(
                 "element_type": hash_result["element_type"],
                 "confidence": confidence,
                 "similarity": None,
-                "hamming": hash_result["hamming"],
+                "hamming": int(hash_result["hamming"]),
                 "app_name": app_name or app_package,
             }
             _latest_response = response
@@ -140,20 +148,36 @@ async def receive_capture(
                 "description": fast_result["description"],
                 "element_type": fast_result["element_type"],
                 "confidence": confidence,
-                "similarity": fast_result["similarity"],
+                "similarity": float(fast_result["similarity"]),
                 "hamming": None,
                 "app_name": app_name or app_package,
             }
             _latest_response = response
             return response
 
-        # STAGE 3: Deep Track — Claude Vision으로 신규 설명 생성 (1~3s)
+        # STAGE 3: Deep Track — Gemini Vision으로 신규 설명 생성 (1~3s)
+        # full_data(전체 스크린샷)를 함께 전달하여 화면 맥락 기반 정확한 설명 생성
         description = deep_analyze(
             data,
             element_type=element_type,
             app_package=app_package,
             app_name=app_name,
+            full_image_bytes=full_data if use_full else None,
         )
+
+        # Gemini 실패 시 DB 저장 없이 에러 응답 반환
+        if description is None:
+            err = {
+                "track": "error",
+                "description": "정보를 찾는 중입니다",
+                "element_type": element_type,
+                "confidence": confidence,
+                "similarity": None,
+                "hamming": None,
+                "app_name": app_name or app_package,
+            }
+            _latest_response = err
+            return err
 
         # ChromaDB 저장 (pHash + CLIP 벡터 + 설명 모두 저장)
         collection = get_collection()
@@ -176,6 +200,7 @@ async def receive_capture(
         )
         # 인메모리 pHash 스토어에도 즉시 등록 (다음 요청부터 Stage 1 히트 가능)
         phash_register(doc_id, ph, description, element_type, app_package)
+        _latest_doc_id = doc_id
 
         response = {
             "track": "deep",
@@ -255,6 +280,83 @@ async def detect_elements(
         return {"elements": [], "image_width": 0, "image_height": 0, "error": str(e)}
 
 
+@app.post("/db/reanalyze")
+async def reanalyze() -> dict:
+    """마지막 캡처 이미지를 Stage 3(Gemini)으로 재분석하여 ChromaDB 설명을 덮어씁니다.
+
+    잘못 캐싱된 설명("정보를 찾는 중입니다" 등)을 올바른 설명으로 교체합니다.
+
+    Returns:
+        { ok, description, doc_id } 또는 { ok: false, error }
+    """
+    global _latest_response
+
+    if _latest_image_bytes is None:
+        return {"ok": False, "error": "재분석할 캡처 이미지가 없습니다."}
+
+    response_meta = _latest_response or {}
+    app_package = response_meta.get("app_name", "")   # app_name 필드에 패키지가 올 수도 있음
+    app_name    = response_meta.get("app_name", "")
+    element_type = ((_latest_detection or {}).get("element_type") or "unknown")
+
+    # Stage 3 강제 실행 (최대 3회 재시도 포함, 전체 스크린샷 맥락 포함)
+    description = deep_analyze(
+        _latest_image_bytes,
+        element_type=element_type,
+        app_package=app_package,
+        app_name=app_name,
+        full_image_bytes=_latest_full_image_bytes,
+    )
+
+    if description is None:
+        return {"ok": False, "error": "Gemini 분석 실패 — 잠시 후 다시 시도하세요."}
+
+    collection = get_collection()
+
+    # 기존 문서가 있으면 업데이트, 없으면 새로 추가
+    if _latest_doc_id:
+        try:
+            collection.update(
+                ids=[_latest_doc_id],
+                metadatas=[{**collection.get(ids=[_latest_doc_id])["metadatas"][0], "description": description}],
+            )
+            # 인메모리 pHash 스토어도 갱신
+            existing = collection.get(ids=[_latest_doc_id])
+            meta = existing["metadatas"][0]
+            ph = phash_compute(_latest_image_bytes)
+            phash_register(_latest_doc_id, ph, description, element_type, meta.get("app_package", ""))
+        except Exception as e:
+            return {"ok": False, "error": f"ChromaDB 업데이트 실패: {e}"}
+    else:
+        # Deep Track으로 새로 저장 (hash/fast 트랙 캡처였던 경우)
+        vector = embed_image(_latest_image_bytes)
+        doc_id = str(uuid.uuid4())
+        ph = phash_compute(_latest_image_bytes)
+        collection.add(
+            ids=[doc_id],
+            embeddings=[vector],
+            metadatas=[{
+                "captured_at": _captured_at or "",
+                "filename": "reanalyzed.png",
+                "element_type": element_type,
+                "confidence": float((_latest_detection or {}).get("confidence") or 0),
+                "description_hint": "",
+                "description": description,
+                "app_package": app_package,
+                "app_name": app_name,
+                "phash": phash_to_str(ph),
+            }],
+        )
+        phash_register(doc_id, ph, description, element_type, app_package)
+
+    # 뷰어에 즉시 반영
+    if _latest_response:
+        _latest_response["description"] = description
+        _latest_response["track"] = "deep"
+
+    return {"ok": True, "description": description, "doc_id": _latest_doc_id}
+
+
 @app.get("/db/count")
 async def db_count() -> dict:
     """ChromaDB에 저장된 이미지 수를 반환합니다.
@@ -301,6 +403,10 @@ async def viewer() -> str:
             f'{"<span style=\"margin-left:8px;font-size:13px;color:#5F6368;\">" + app + "</span>" if app else ""}'
             f'{sim_text}'
             f'<p style="margin:8px 0 0;font-size:16px;color:#202124;">{desc}</p>'
+            f'<button onclick="reanalyze()" style="margin-top:10px;padding:6px 16px;'
+            f'background:#EA4335;color:white;border:none;border-radius:8px;'
+            f'font-size:13px;cursor:pointer;">🔄 재분석 (Gemini)</button>'
+            f'<span id="reanalyze-status" style="margin-left:10px;font-size:13px;color:#5F6368;"></span>'
             f'</div>'
         )
 
@@ -323,6 +429,28 @@ async def viewer() -> str:
            padding: 40px; }}
     h1 {{ color: #1A73E8; font-size: 28px; margin-bottom: 8px; }}
   </style>
+  <script>
+    async function reanalyze() {{
+      const btn = event.target;
+      const status = document.getElementById('reanalyze-status');
+      btn.disabled = true;
+      status.textContent = '재분석 중...';
+      try {{
+        const res = await fetch('/db/reanalyze', {{ method: 'POST' }});
+        const data = await res.json();
+        if (data.ok) {{
+          status.textContent = '✅ 완료: ' + data.description;
+          setTimeout(() => location.reload(), 1500);
+        }} else {{
+          status.textContent = '❌ ' + data.error;
+          btn.disabled = false;
+        }}
+      }} catch(e) {{
+        status.textContent = '❌ 네트워크 오류';
+        btn.disabled = false;
+      }}
+    }}
+  </script>
 </head>
 <body>
   <h1>bridgeUI 캡처 뷰어</h1>
