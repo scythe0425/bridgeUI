@@ -4,6 +4,9 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 from typing import Optional
 
+from dotenv import load_dotenv
+load_dotenv()  # backend/.env 에서 ANTHROPIC_API_KEY 로드
+
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import HTMLResponse
 
