@@ -1,9 +1,23 @@
-import base64
+import io
 import os
 
-import anthropic
+from google import genai
+from google.genai import types
+from PIL import Image
 
-_client: anthropic.Anthropic | None = None
+_client: genai.Client | None = None
+
+_SYSTEM_INSTRUCTION = (
+    "당신은 70대 어르신의 스마트폰 사용을 돕는 친절한 안내원입니다. "
+    "어려운 단어 없이, 짧고 명확하게 설명합니다. "
+    "항상 2문장 이내로만 답하세요."
+)
+
+_GENERATE_CONFIG = types.GenerateContentConfig(
+    system_instruction=_SYSTEM_INSTRUCTION,
+    temperature=0.2,
+    max_output_tokens=300,
+)
 
 # 주요 앱 패키지명 → 한국어 앱 이름 매핑
 _APP_NAMES: dict[str, str] = {
@@ -26,10 +40,10 @@ _APP_NAMES: dict[str, str] = {
 }
 
 
-def _get_client() -> anthropic.Anthropic:
+def _get_client() -> genai.Client:
     global _client
     if _client is None:
-        _client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        _client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
     return _client
 
 
@@ -46,7 +60,7 @@ def analyze(
     app_package: str = "",
     app_name: str = "",
 ) -> str:
-    """Claude Vision으로 UI 요소의 노년층 친화적 설명을 생성합니다.
+    """Gemini Vision으로 UI 요소의 노년층 친화적 설명을 생성합니다.
 
     Args:
         image_bytes: 크롭된 UI 요소의 PNG 바이트.
@@ -61,32 +75,20 @@ def analyze(
     resolved_name = _resolve_app_name(app_package, app_name)
     prompt = (
         f"이것은 {resolved_name} 앱의 {element_type}입니다.\n"
-        "70대 사용자가 이것을 눌렀을 때 어떤 일이 일어나는지,\n"
-        "쉬운 단어로 2문장 이내로 설명하세요."
+        "이것을 눌렀을 때 어떤 일이 일어나는지 설명하세요.\n\n"
+        "예시:\n"
+        "- 홈 버튼: 처음 화면으로 돌아가는 버튼이에요. 길을 잃었을 때 여기를 누르면 됩니다.\n"
+        "- 검색창: 가고 싶은 곳의 이름을 입력하는 곳이에요. 글자를 쓰면 장소를 찾아줍니다.\n\n"
+        "위 예시처럼 쉬운 말로 2문장 이내로 설명하세요."
     )
 
     try:
-        image_b64 = base64.standard_b64encode(image_bytes).decode()
-        response = _get_client().messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=200,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": "image/png",
-                                "data": image_b64,
-                            },
-                        },
-                        {"type": "text", "text": prompt},
-                    ],
-                }
-            ],
+        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        response = _get_client().models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[image, prompt],
+            config=_GENERATE_CONFIG,
         )
-        return response.content[0].text.strip()
+        return response.text.strip()
     except Exception:
         return "정보를 찾는 중입니다"
