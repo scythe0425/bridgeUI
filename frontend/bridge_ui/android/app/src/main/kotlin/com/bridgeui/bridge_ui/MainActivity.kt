@@ -3,8 +3,10 @@ package com.bridgeui.bridge_ui
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.usage.UsageStatsManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
@@ -29,6 +31,9 @@ class MainActivity : FlutterActivity() {
     private var mediaProjection: MediaProjection? = null
     private var pendingResult: MethodChannel.Result? = null
     private var lastCaptureBytes: ByteArray? = null
+    private var pendingProjectionResultCode: Int = 0
+    private var pendingProjectionData: Intent? = null
+    private var serviceConnection: ServiceConnection? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -42,7 +47,7 @@ class MainActivity : FlutterActivity() {
             when (call.method) {
                 "requestCapturePermission" -> {
                     pendingResult = result
-                    startForegroundServiceIfNeeded()
+                    // Android 14+: 포그라운드 서비스는 권한 허가 후(onActivityResult)에 시작해야 함
                     @Suppress("DEPRECATION")
                     startActivityForResult(
                         projectionManager!!.createScreenCaptureIntent(),
@@ -56,12 +61,28 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    /// Android 14(API 34)부터 MediaProjection 전에 포그라운드 서비스 필수.
-    private fun startForegroundServiceIfNeeded() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            val intent = Intent(this, MediaProjectionForegroundService::class.java)
-            startForegroundService(intent)
+    /// Android 14+: 서비스 시작 후 바인딩으로 startForeground() 완료를 확인한 뒤
+    /// getMediaProjection()을 호출합니다.
+    private fun startAndBindProjectionService() {
+        val intent = Intent(this, MediaProjectionForegroundService::class.java)
+        startForegroundService(intent)
+        val conn = object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName?, binder: android.os.IBinder?) {
+                serviceConnection?.let { unbindService(it) }
+                serviceConnection = null
+                val pData = pendingProjectionData ?: run {
+                    pendingResult?.error("CAPTURE_FAILED", "캡처 데이터 없음", null)
+                    pendingResult = null
+                    return
+                }
+                // 서비스가 startForeground() 완료 후 이 시점에 getMediaProjection() 안전
+                mediaProjection = projectionManager!!.getMediaProjection(pendingProjectionResultCode, pData)
+                captureScreen()
+            }
+            override fun onServiceDisconnected(name: ComponentName?) {}
         }
+        serviceConnection = conn
+        bindService(intent, conn, Context.BIND_AUTO_CREATE)
     }
 
     @Deprecated("Deprecated in Java")
@@ -71,10 +92,16 @@ class MainActivity : FlutterActivity() {
         if (requestCode != projectionRequestCode) return
 
         if (resultCode == Activity.RESULT_OK && data != null) {
-            mediaProjection = projectionManager!!.getMediaProjection(resultCode, data)
-            captureScreen()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                // Android 14+: 서비스가 startForeground() 완료 후 getMediaProjection() 호출
+                pendingProjectionResultCode = resultCode
+                pendingProjectionData = data
+                startAndBindProjectionService()
+            } else {
+                mediaProjection = projectionManager!!.getMediaProjection(resultCode, data)
+                captureScreen()
+            }
         } else {
-            stopForegroundService()
             pendingResult?.error("PERMISSION_DENIED", "화면 캡처 권한이 거부되었습니다", null)
             pendingResult = null
         }
