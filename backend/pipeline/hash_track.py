@@ -17,6 +17,8 @@ from PIL import Image
 
 # 해밍 거리 임계값: 64비트 중 8비트 이하 차이 → 동일 아이콘으로 판정
 HAMMING_THRESHOLD = 8
+# 크로스앱 히트: 같은 카테고리지만 다른 앱 항목과 매칭 시 더 엄격한 임계값 적용
+CROSS_APP_HAMMING_THRESHOLD = 4
 
 # element_id → (phash, description, element_type, app_package)
 _store: dict[str, tuple[imagehash.ImageHash, str, str, str]] = {}
@@ -68,18 +70,24 @@ def register(
     _store[element_id] = (ph, description, element_type, app_package)
 
 
-def search(image_bytes: bytes, app_package: str = "") -> dict | None:
+def search(
+    image_bytes: bytes,
+    app_packages: list[str] | None = None,
+    own_package: str = "",
+) -> dict | None:
     """pHash로 가장 유사한 캐시 항목을 검색합니다.
 
-    app_package가 지정되면 동일 앱 내에서만 비교합니다.
-    빈 문자열이면 전체 스토어를 검색합니다.
+    app_packages가 지정되면 해당 앱 목록 내에서만 비교합니다.
+    own_package를 지정하면 다른 앱 항목에는 더 엄격한 해밍 임계값(≤4)을 적용하여
+    모양은 비슷하지만 기능이 다른 크로스앱 오탐을 방지합니다.
 
     Args:
         image_bytes: 쿼리 이미지 바이트.
-        app_package: 앱 패키지명 필터.
+        app_packages: 허용할 앱 패키지 목록. None이면 필터 없음.
+        own_package: 현재 캡처 앱 패키지명. 크로스앱 임계값 적용 기준.
 
     Returns:
-        캐시 히트 시 { "description", "element_type", "hamming" },
+        캐시 히트 시 { "description", "element_type", "hamming", "cross_app" },
         미스 시 None.
     """
     if not _store:
@@ -89,16 +97,21 @@ def search(image_bytes: bytes, app_package: str = "") -> dict | None:
     best_dist = HAMMING_THRESHOLD + 1
     best: dict | None = None
 
+    pkg_set = set(app_packages) if app_packages else None
+
     for elem_id, (stored_ph, desc, el_type, pkg) in _store.items():
-        if app_package and pkg != app_package:
+        if pkg_set and pkg not in pkg_set:
             continue
+        cross_app = bool(own_package and pkg and pkg != own_package)
+        threshold = CROSS_APP_HAMMING_THRESHOLD if cross_app else HAMMING_THRESHOLD
         dist = ph - stored_ph
-        if dist <= HAMMING_THRESHOLD and dist < best_dist and desc:
+        if dist <= threshold and dist < best_dist and desc:
             best_dist = dist
             best = {
                 "description": desc,
                 "element_type": el_type,
                 "hamming": dist,
+                "cross_app": cross_app,
             }
 
     return best

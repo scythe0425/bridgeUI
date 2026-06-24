@@ -25,6 +25,40 @@ from pipeline.hash_track import (
 from pipeline.fast_track import search as fast_search
 from pipeline.deep_track import analyze as deep_analyze
 
+# 앱 카테고리: 같은 카테고리 내 앱끼리 Stage 1/2 캐시를 공유합니다.
+# 지도 앱은 "길찾기" 버튼 등 동일한 UI·동작을 공유하므로 같은 그룹으로 묶습니다.
+_APP_CATEGORIES: list[list[str]] = [
+    [
+        "com.nhn.android.nmap",        # 네이버 지도
+        "net.daum.android.map",        # 카카오맵
+        "com.google.android.apps.maps",# 구글 지도
+        "com.tmap.app",                # 티맵
+    ],
+    [
+        "com.kakao.talk",              # 카카오톡
+        "com.samsung.android.messaging",
+    ],
+    [
+        "com.baemin.android",          # 배달의민족
+        "kr.co.yogiyo.rookieDeveloper",# 요기요
+        "com.coupang.mobile",          # 쿠팡이츠
+    ],
+    [
+        "mobi.korail.Talk",            # 코레일
+    ],
+]
+
+
+def _get_category_packages(app_package: str) -> list[str]:
+    """앱 패키지가 속한 카테고리의 전체 패키지 목록을 반환합니다.
+
+    카테고리에 없으면 해당 앱만 포함한 단일 리스트를 반환합니다.
+    """
+    for group in _APP_CATEGORIES:
+        if app_package in group:
+            return group
+    return [app_package] if app_package else []
+
 
 _latest_image_b64: str | None = None
 _latest_image_bytes: bytes | None = None      # 재분석용 element 원본 바이트
@@ -122,8 +156,13 @@ async def receive_capture(
         element_type = detection["element_type"]
         confidence = float(detection["confidence"]) if detection["confidence"] is not None else None
 
-        # STAGE 1: pHash — 해밍 거리 ≤ 8이면 즉시 반환 (<1ms)
-        hash_result = hash_search(data, app_package=app_package)
+        # 같은 카테고리 앱 패키지 목록 (지도앱끼리 캐시 공유)
+        category_packages = _get_category_packages(app_package)
+
+        fallback = detection.get("fallback", False)
+
+        # STAGE 1: pHash — 해밍 거리 ≤ 8(동일앱) / ≤ 4(크로스앱)이면 즉시 반환 (<1ms)
+        hash_result = hash_search(data, app_packages=category_packages, own_package=app_package)
         if hash_result:
             response = {
                 "track": "hash",
@@ -133,6 +172,8 @@ async def receive_capture(
                 "similarity": None,
                 "hamming": int(hash_result["hamming"]),
                 "app_name": app_name or app_package,
+                "cross_app": hash_result.get("cross_app", False),
+                "fallback": fallback,
             }
             _latest_response = response
             return response
@@ -140,8 +181,8 @@ async def receive_capture(
         # ② CLIP 임베딩 생성 (~50ms)
         vector = embed_image(data)
 
-        # STAGE 2: CLIP 유사도 — 코사인 ≥ 0.90 이면 반환
-        fast_result = fast_search(vector, app_package=app_package)
+        # STAGE 2: CLIP 유사도 — 코사인 ≥ 0.90(동일앱) / ≥ 0.95(크로스앱)이면 반환
+        fast_result = fast_search(vector, app_packages=category_packages, own_package=app_package)
         if fast_result:
             response = {
                 "track": "fast",
@@ -151,6 +192,8 @@ async def receive_capture(
                 "similarity": float(fast_result["similarity"]),
                 "hamming": None,
                 "app_name": app_name or app_package,
+                "cross_app": fast_result.get("cross_app", False),
+                "fallback": fallback,
             }
             _latest_response = response
             return response
@@ -210,6 +253,8 @@ async def receive_capture(
             "similarity": None,
             "hamming": None,
             "app_name": app_name or app_package,
+            "cross_app": False,
+            "fallback": fallback,
         }
         _latest_response = response
         return response

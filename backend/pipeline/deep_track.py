@@ -118,7 +118,11 @@ def analyze(
                 contents=contents,
                 config=_GENERATE_CONFIG,
             )
-            return response.text.strip()
+            text = response.text.strip()
+            # 잘린 응답 판단: 너무 짧거나 문장이 마침표/요/다로 끝나지 않으면 재시도
+            if len(text) < 20 or not text[-1] in '.요다':
+                raise ValueError(f"응답이 불완전함: '{text}'")
+            return text
         except Exception as e:
             logger.error("[deep_track] Gemini 호출 실패 (시도 %d/3): %s", attempt + 1, e)
             if attempt < 2:
