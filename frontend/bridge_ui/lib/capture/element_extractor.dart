@@ -57,6 +57,7 @@ class ElementExtractor {
 
     return ExtractedElement(
       croppedImageBytes: byteData!.buffer.asUint8List(),
+      fullScreenshotBytes: screenshotBytes,
       metadata: {
         'x': logicalRect.left,
         'y': logicalRect.top,
@@ -65,6 +66,10 @@ class ElementExtractor {
         'screenWidth': fullImage.width / devicePixelRatio,
         'screenHeight': fullImage.height / devicePixelRatio,
       },
+      cropPxLeft: px.left.toInt(),
+      cropPxTop: px.top.toInt(),
+      cropPxRight: px.right.toInt(),
+      cropPxBottom: px.bottom.toInt(),
     );
   }
 

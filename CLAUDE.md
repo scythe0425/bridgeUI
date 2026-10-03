@@ -8,12 +8,14 @@
 
 - **프로젝트명**: bridgeUI (Senior UI-Guide Plugin)
 - **부제**: 디지털 기호(Icon) 장벽 해소를 위한 실시간 UI 번역 플러그인 구현 — 노년층 디지털 리터러시
-- **현재 상태**: 5월 진행 중 — ChromaDB 구축 완료, Fast Track / Deep Track 구현 단계
+- **현재 상태**: 6월 진행 중 — 3단계 캐시 파이프라인(pHash→CLIP→Claude Vision) + seed DB(94개) + YOLO 기반 UI 선택 오버레이 + 말풍선 UI 완성, Step 10 (최적화·성과 분석) 예정
 - **목적**: 지도 앱 등 복잡한 UI를 가진 앱에서 노년층 사용자가 특정 아이콘이나 버튼의 기능을 직관적으로 이해할 수 있도록 돕는 보조 도구.
 - **핵심 가치**:
-  - **접근성**: 시각적 하이라이트와 음성 안내(TTS) 제공.
-  - **효율성**: 이미 알려진 UI는 Vector DB로 즉시 응답 (Fast Track).
-  - **유연성**: 새로운 UI는 VLM(Vision Language Model)으로 실시간 분석 (Deep Track).
+  - **접근성**: 시각적 하이라이트 + 말풍선 설명 제공. (TTS 제거됨)
+  - **효율성**: 동일 이미지는 pHash로 <1ms 응답 (Stage 1), 유사 이미지는 CLIP으로 ~80ms 응답 (Stage 2).
+  - **유연성**: 신규 UI는 Claude Vision으로 실시간 분석 후 자동 캐싱 (Stage 3 Deep Track).
+  - **정확성**: 앱 패키지명 컨텍스트로 동일 아이콘의 앱별 의미 차이를 정확히 구분.
+  - **명확성**: /detect로 YOLO가 인식한 UI만 파란 테두리로 표시 → 사용자가 직접 선택.
 
 ---
 
@@ -30,12 +32,13 @@ Claude는 코드 작성 전 현재 단계를 확인하고, 해당 단계 범위 
 | 5 | ImageCapture API 연동 및 데이터 추출·전송 | | ● | | | ✅ 완료 |
 | 5-1 | 크롭 이미지 내 UI/아이콘 요소 탐지 (OmniParser YOLOv8 Phase 2) | | | ● | | ✅ 완료 |
 | 6 | Vector DB (ChromaDB) 환경 구축 + CLIP 임베딩 저장 | | | ● | | ✅ 완료 |
-| 7 | Fast Track (고속 매칭) 로직 구현 | | | ● | | 🔄 진행 중 |
-| 8 | Deep Track (Claude Vision) 추론 엔진 연동 | | | ● | | 🔄 진행 중 |
-| 9 | 가이드 UI (말풍선) 및 TTS 시스템 통합 | | | | ● | ⬜ 예정 |
+| 6-1 | ChromaDB 사전 구축 — 3개 앱 71개 UI 요소 seed | | | ● | | ✅ 완료 |
+| 7 | 3단계 캐시 파이프라인 구현 (pHash → CLIP → Deep Track) | | | ● | | ✅ 완료 |
+| 8 | Deep Track (Claude Vision) 추론 엔진 연동 | | | ● | | ✅ 완료 |
+| 9 | 가이드 UI (말풍선) 및 TTS 시스템 통합 | | | | ● | ✅ 완료 |
 | 10 | 시스템 최적화 및 최종 성과 분석 | | | | ● | ⬜ 예정 |
 
-> **현재 집중 단계**: #7~#8 (5월) — 하이브리드 추론 파이프라인 완성.
+> **현재 집중 단계**: #10 (6월) — Fast Track 캐시 히트율 측정, OmniParser conf 튜닝, 사용성 테스트.
 
 ---
 
@@ -44,22 +47,29 @@ Claude는 코드 작성 전 현재 단계를 확인하고, 해당 단계 범위 
 ```
 사용자 → 플러그인(오버레이) → 백엔드 서버 → Vector DB → VLM 모델
   ①  플러그인 버튼 터치 (트리거)
-  ②  화면 Freeze + Dimming
-  ③  View Tree 기반 1차 UI 스캔 (클릭 가능 요소 탐지)
-  ④  후보군 하이라이트 + 음성 안내 ("궁금한 버튼을 눌러보세요")
-  ⑤  사용자: 하이라이트된 아이콘 터치 (선택)
-  ⑥  크롭 영역 드래그 조절 + 메타데이터 추출
- [NEW] 크롭 이미지 내 UI/아이콘 요소 탐지 (정밀 영역 추출)
-  ⑦  로딩 UI 표시 ("잠시만 기다려주세요")
-  ⑧  서버로 분석 요청 (크롭 이미지 + 메타데이터)
-  ⑨  Fast Track: 이미지 벡터 유사도 검색
-      ├─ 캐시 히트 → ⑩ 저장된 설명 즉시 반환
-      └─ 캐시 미스 → ⑪ 후보 없음 → ⑫ Deep Track 추론 요청
-  ⑬  VLM: 노년층 맞춤형 목적 중심 설명 생성
-  ⑭  추론 결과 ChromaDB 신규 캐싱
-  ⑮  최종 분석 결과 응답 (설명 문장 JSON)
-  ⑯  하이라이트 해제, 원래 화면 복귀 준비
-  ⑰  말풍선 UI + TTS 음성 안내 ("이 버튼은 내 위치를 찾는 버튼이에요.")
+  ②  UsageStatsManager → 직전 포그라운드 앱 패키지명 수집 (app_package, app_name)
+  ③  화면 Freeze
+      └─ [백그라운드] 전체 스크린샷 → POST /detect (YOLO 탐지만, 사용자 몰래)
+  ④  사용자: 분석할 영역을 탭 → 크롭 박스 생성
+  ⑤  크롭 영역 드래그 조절 (이동 + 리사이즈)
+  ⑥  "UI 찾기" 버튼 탭 → /detect 결과 수신 (③번 동안 이미 완료)
+      └─ 크롭 영역 내 YOLO 탐지 UI에만 파란 테두리 오버레이
+  ⑦  사용자: 파란 테두리 UI 직접 탭 (명확한 버튼·아이콘만 선택 가능)
+  ⑧  서버로 분석 요청 POST /capture
+      (full_image 전체 스크린샷 + crop_x1/y1/x2/y2(=YOLO bbox) + app_package + app_name)
+  ⑨  OmniParser YOLOv8 → 전체 화면 탐지(conf 0.05) → 크롭 영역 내 중심거리 최소 박스 선택
+      └─ fallback: YOLO 탐지 없으면 사용자 크롭 좌표 직접 사용
+  ⑩  Stage 1 — pHash (Perceptual Hash): 해밍 거리 ≤ 8 → 즉시 반환 (<1ms, track: "hash")
+      └─ 캐시 미스 → CLIP 임베딩 생성 (512차원 벡터)
+  ⑪  Stage 2 — CLIP 유사도: app_package 필터 코사인 ≥ 0.90 → 반환 (~80ms, track: "fast")
+      │   └─ seed DB 사전 구축으로 주요 앱의 첫 쿼리부터 캐시 히트 가능
+      └─ 캐시 미스 → Stage 3
+  ⑫  Stage 3 — Claude Vision: "{app_name} 앱의 {element_type}" 컨텍스트 프롬프트
+  ⑬  설명 텍스트 생성 + ChromaDB 저장 (pHash·CLIP·description 모두 저장)
+      + 인메모리 pHash 스토어 즉시 등록 (다음 요청부터 Stage 1 히트 가능)
+  ⑭  최종 JSON 응답 { track, description, element_type, confidence, similarity, hamming, app_name }
+  ⑮  말풍선 UI 표시 (track 배지 + 설명 텍스트)
+  ⑯  닫기 버튼 → 크롭 초기화 → 다시 선택 가능
 ```
 
 ---
@@ -73,37 +83,69 @@ Claude는 코드 작성 전 현재 단계를 확인하고, 해당 단계 범위 
 | 구현 파일 | 역할 |
 |-----------|------|
 | `trigger_button.dart` | ① 하단 파란 버튼, 캡처 트리거 |
-| `capture_service.dart` | ② MediaProjection 화면 캡처 (MethodChannel) |
-| `freeze_overlay.dart` | ②③ 정지 화면 + 드래그 크롭 셀렉터 (이동 + 리사이즈) |
-| `element_extractor.dart` | ⑥ dp → px 변환 후 이미지 크롭 |
-| `capture_sender.dart` | ⑧ 백엔드 `/capture`로 multipart POST |
+| `capture_service.dart` | ③ MediaProjection 화면 캡처 + `getForegroundApp()` MethodChannel |
+| `freeze_overlay.dart` | ③④⑤ 정지 화면 + 드래그 크롭 셀렉터 (이동 + 리사이즈) |
+| `element_extractor.dart` | ⑥ dp → px 변환 + 전체 스크린샷 바이트 & 크롭 좌표 포함 |
+| `extracted_element.dart` | ⑥ 전체 스크린샷 + 크롭 좌표(물리px) + appPackage + appName 모델 |
+| `capture_sender.dart` | ⑧ 백엔드 `/capture`로 multipart POST (full_image + crop 좌표 + 앱 정보) |
+| `MainActivity.kt` | ② `UsageStatsManager`로 직전 앱 패키지명 반환 |
+
+**앱 context 수집 흐름**
+```
+트리거 버튼 탭
+  → getForegroundApp() [UsageStatsManager]
+  → { package: "com.nhn.android.nmap", name: "네이버 지도" }
+  → requestCapture() [MediaProjection]
+  → FreezeOverlay(appPackage, appName)
+  → ExtractedElement {
+      fullScreenshotBytes,          ← 전체 스크린샷 PNG
+      croppedImageBytes,            ← 사용자 크롭 (fallback 용도)
+      cropPxLeft/Top/Right/Bottom,  ← 물리px 크롭 좌표
+      metadata, appPackage, appName
+    }
+  → CaptureSender.send() → POST { full_image, crop_x1/y1/x2/y2, app_package, app_name }
+```
 
 **핵심 해결 사항**
 - Android 14+ MediaProjection 콜백 필수 등록
 - 논리 픽셀(dp) ↔ 물리 픽셀(px) 좌표 변환 (`devicePixelRatio`)
+- `PACKAGE_USAGE_STATS` 권한: 앱 설치 후 설정에서 수동 허용 필요
+  - 미허용 시 `app_package` 빈 문자열로 전송 → 앱 필터 없이 전체 검색으로 폴백
 
 ---
 
-### ✅ 5-1단계 — 크롭 이미지 내 UI/아이콘 요소 탐지 (완료)
+### ✅ 5-1단계 — 전체 화면 기반 UI/아이콘 요소 탐지 (완료 → Phase 3으로 개선)
 
-**시퀀스 ⑥ 이후, ⑦ 이전**
+**시퀀스 ⑨ 담당**
 
-**목표**: 사용자가 선택한 크롭 영역 안에서 실제 UI 요소(아이콘, 버튼)가 어디에 있는지 탐지하여, 노이즈(배경, 여백)를 제거하고 핵심 요소만 추출.
+**목표**: 전체 스크린샷에서 YOLO로 모든 UI 요소를 탐지한 후, 사용자 크롭 영역 내에 완전히 포함된 요소를 선택하여 element_type과 정밀한 element 이미지를 결정.
 
 **구현 파일**: `backend/pipeline/ui_detector.py` ✅
 
 ---
 
-#### 탐지 전략: Phase 2 (OmniParser YOLOv8) ✅ 현재 구현
+#### 탐지 전략: Phase 3 (전체 스크린샷 기반) ✅ 현재 구현
 
-~~**Phase 1**: Claude Vision Zero-shot~~ → **Phase 2로 전환 완료**
+| Phase | 방식 | 상태 |
+|-------|------|------|
+| Phase 1 | Claude Vision Zero-shot | ~~완료~~ 전환 |
+| Phase 2 | 크롭 이미지 640×960 캔버스 패딩 → YOLO (conf 0.03~0.1) | ~~완료~~ 전환 |
+| **Phase 3** | **전체 스크린샷 → YOLO (conf 0.5+) → 크롭 내 최적 박스 선택** | ✅ 현재 |
 
-**Phase 2**: Microsoft OmniParser v2.0 YOLOv8 파인튜닝 모델
-- 67,000장 스크린샷으로 학습된 가중치 (`backend/weights/icon_detect/model.pt`)
-- nc=1 단일 클래스 (`icon`) — 탐지 박스 종횡비 heuristic으로 icon/button/text 구분
-- 응답 시간 ~50ms (CPU 기준)
-- Florence-2 캡션 레이어 미사용 (설명 생성은 Deep Track 담당)
-- `ANTHROPIC_API_KEY` 불필요 (탐지 단계에서 API 호출 없음)
+**Phase 3 핵심 설계**
+OmniParser는 전체 스크린샷 컨텍스트 기반으로 학습됨. 전체 화면을 그대로 입력하면 conf 0.5+ 달성.
+탐지된 모든 박스 중 사용자 크롭 영역과의 포함 관계로 최적 요소 선택.
+
+```python
+# detect_from_full_screenshot() 처리 흐름
+전체 스크린샷 → YOLO predict(conf=0.05)   # OmniParser 원본 임계값
+  ↓ 모든 박스에 대해:
+  ① 크롭 영역에 완전 포함(margin=10px) → conf 최고 박스 선택
+  ② 없으면 부분 겹침 → overlap_ratio × conf 최고 박스 선택
+  ③ 없으면 → 사용자 크롭 좌표로 직접 자름 (fallback)
+  ↓
+  선택된 박스로 element 이미지 추출 → pHash/CLIP/Claude Vision 공급
+```
 
 ```bash
 # 가중치 다운로드 (단 1회, backend/ 에서 실행)
@@ -111,26 +153,31 @@ python -c "from huggingface_hub import hf_hub_download; \
 hf_hub_download('microsoft/OmniParser-v2.0', 'icon_detect/model.pt', local_dir='weights')"
 ```
 
----
-
-#### Phase 2 구현 스펙
-
-**반환 구조**
+**주요 함수 구조**
 ```python
-def detect_ui_element(image_bytes: bytes) -> dict:
-    """크롭 이미지에서 주요 UI 요소를 탐지합니다 (OmniParser YOLOv8 Phase 2).
+def detect_from_full_screenshot(
+    full_image_bytes: bytes,
+    crop_x1: int, crop_y1: int, crop_x2: int, crop_y2: int,
+    margin: int = 10,
+) -> dict:
+    """전체 스크린샷에서 YOLO로 탐지 후 크롭 영역 내 최적 요소를 선택합니다.
 
     Returns:
         {
-          "is_ui_element": bool,       # UI 요소 존재 여부
-          "element_type": str,         # "icon" | "button" | "text" | "unknown"
-          "confidence": float,         # YOLOv8 탐지 신뢰도 0.0~1.0
-          "description_hint": str      # 요소 유형 힌트 (Deep Track 프롬프트에 활용)
+          "is_ui_element": bool,
+          "element_image_bytes": bytes,   # YOLO bbox로 정밀 추출된 element PNG
+          "element_type": str,            # "icon" | "button" | "text" | "unknown"
+          "confidence": float,            # YOLOv8 탐지 신뢰도 (conf 0.05 기준)
+          "description_hint": str,
+          "fallback": bool,               # True면 YOLO 탐지 없어서 사용자 크롭 사용
         }
     """
+
+def detect_ui_element(image_bytes: bytes) -> dict:
+    """[구버전 폴백] 크롭 이미지만 전송된 경우 캔버스 패딩 방식으로 탐지합니다."""
 ```
 
-**element_type 분류 로직**
+**element_type 분류 로직** (Phase 2/3 공통)
 ```
 탐지 박스 종횡비 (width / height):
   < 1.5  → icon   (정사각형에 가까운 심볼)
@@ -139,60 +186,156 @@ def detect_ui_element(image_bytes: bytes) -> dict:
 탐지 없음 → unknown
 ```
 
-**처리 흐름**
-1. 크롭 이미지 PIL Image 변환
-2. YOLOv8 `predict(conf=0.3)` → 탐지 박스 목록
-3. 탐지 없음 → `unknown / 0.0` 반환
-4. 최고 confidence 박스 선택 → 종횡비로 element_type 결정
-5. `element_type`을 CLIP 메타데이터 + Deep Track 컨텍스트로 전달
-
-**Flutter 연동**
-- 탐지된 `element_type`을 `FreezeOverlay` 미리보기 카드에 뱃지로 표시
-- 예: `"아이콘으로 인식됨"` (파란색), `"버튼으로 인식됨"` (초록색)
-
 ---
 
 ### ✅ 6단계 — ChromaDB + CLIP 임베딩 저장 (완료)
 
-**시퀀스 ⑨ 기반 인프라**
+**시퀀스 ⑩ 기반 인프라**
 
 | 구현 파일 | 역할 |
 |-----------|------|
 | `backend/db/chroma_store.py` | PersistentClient 싱글턴, cosine 유사도 컬렉션 |
 | `backend/pipeline/embedder.py` | `clip-ViT-B-32`로 512차원 벡터 생성 |
-| `backend/main.py` | `/capture` 수신 시 자동 임베딩·저장, `/db/count` 엔드포인트 |
 
 **저장 구조**
 ```
 ChromaDB collection: ui_elements
-  id          : UUID
-  embedding   : List[float]  # 512차원 CLIP 벡터
-  metadata    : {
-    captured_at   : str,
-    filename      : str,
-    element_type  : str,     # 5-1단계에서 탐지된 유형
-    description   : str,     # 8단계에서 채워짐
+  id               : UUID
+  embedding        : List[float]  # 512차원 CLIP 벡터
+  metadata         : {
+    captured_at    : str,
+    filename       : str,
+    element_type   : str,         # 5-1단계에서 탐지된 유형
+    confidence     : float,       # YOLOv8 탐지 신뢰도
+    description_hint: str,        # Deep Track 프롬프트 힌트
+    description    : str,         # Stage 3 Deep Track 생성 설명 (캐시)
+    app_package    : str,         # "com.nhn.android.nmap"
+    app_name       : str,         # "네이버 지도"
+    phash          : str,         # pHash 64비트 16진수 문자열 (Stage 1용)
   }
 ```
 
 ---
 
-### 🔄 7단계 — Fast Track 구현
+### ✅ 6-1단계 — ChromaDB 사전 구축 (seed_db) (완료)
 
-**시퀀스 ⑨~⑩ 담당**
+**목표**: 서비스 시작 전 주요 3개 앱의 UI 요소를 미리 DB에 저장하여, 실제 사용자가 첫 쿼리부터 Fast Track 캐시 히트를 경험할 수 있도록 함.
 
-**목표**: 새 이미지 수신 시 DB에서 유사 이미지를 검색, 임계값 이상이면 저장된 설명을 즉시 반환.
+**구현 파일**: `backend/db/seed_db.py` ✅
 
-**생성 파일**: `backend/pipeline/fast_track.py`
+**사전 구축 대상 (총 94개 UI 요소)**
+
+| 앱 | 요소 수 | 주요 포함 항목 |
+|----|---------|---------------|
+| 배달의민족 | 33개 | 헤더 아이콘 4종, 검색창, 탭 5종, 음식카테고리 10종, 편의점 5종, 하단 탭바 5종 등 |
+| 네이버지도 | 40개 | 홈(17) + 길찾기 입력(6) + 교통수단 탭(4) + 안내시작(2) + 장소상세 GS25(7) + 장소상세 경희대(4) |
+| 코레일 | 21개 | 헤더 아이콘 3종, 승차권 입력 전체, 서비스 아이콘 4종, 하단 탭바 4종 등 |
+
+**seed_db.py 핵심 구조**
 
 ```python
-SIMILARITY_THRESHOLD = 0.90  # cosine 유사도 임계값
+class UIElement(NamedTuple):
+    element_id: str      # 고유 식별자 (예: "baemin_nav_home")
+    app: str             # 앱 이름
+    bbox: tuple          # (left, top, right, bottom) → 1080×2340 기준. (0,0,0,0)이면 스킵
+    element_type: str    # "icon" | "button" | "tab" | "text"
+    label: str           # UI 요소 레이블 (한국어)
+    description: str     # 노년층 친화적 목적 중심 설명 (2문장 이내)
+    screenshot: str = "" # 소속 스크린샷 파일명. 비어있으면 APP_CONFIG 첫 번째 사용
 
-def search(embedding: list[float]) -> dict | None:
-    """유사 이미지를 검색하여 캐시 히트 시 설명을 반환합니다.
+APP_CONFIG: dict[str, tuple[list[str], str, list[UIElement]]] = {
+    "baemin":    (["baemin.png"], "com.baemin.android", BAEMIN_ELEMENTS),
+    "naver_map": (
+        ["naver_map.png", "naver_map_directions_4.png", "naver_map_directions_5.png",
+         "naver_map_directions_7.png", "naver_map_detail.png", "naver_map_detail_2.png"],
+        "com.nhn.android.nmap", NAVER_MAP_ELEMENTS,
+    ),
+    "korail":    (["korail.png"], "mobi.korail.Talk", KORAIL_ELEMENTS),
+}
 
-    Args:
-        embedding: CLIP 512차원 벡터.
+def scale_bbox(bbox, src_w, src_h, ref_w=1080, ref_h=2340) -> tuple:
+    """다른 해상도 스크린샷도 자동 비율 변환."""
+
+def run_seed(screenshots_dir: Path, dry_run: bool = False) -> None:
+    """스크린샷 크롭 → YOLO 정밀 탐지 → CLIP 임베딩 → pHash 계산 → ChromaDB upsert."""
+```
+
+**시딩 파이프라인**: 전체 스크린샷 → YOLO 정밀 bbox 크롭 → CLIP 임베딩(512차원) → pHash 계산(64비트) → ChromaDB upsert
+- 요소별 `screenshot` 필드로 소속 스크린샷 결정 (앱당 여러 스크린샷 지원)
+- `bbox=(0,0,0,0)` 요소는 스크린샷 추가 대기 중으로 자동 스킵
+- 서버 시작 시 `load_from_collection()`이 저장된 pHash를 인메모리 스토어로 일괄 로드
+- seed된 요소는 첫 번째 요청부터 Stage 1(pHash) 히트 가능
+
+**설명 작성 원칙**: 모든 description은 "70대 사용자가 이것을 눌렀을 때 어떤 일이 일어나는지" 목적 중심(Purpose-oriented)으로 2문장 이내 작성.
+
+**스크린샷 배치 경로**
+```
+backend/db/screenshots/
+  baemin.jpg                   → 배달의민족 홈 화면
+  naver_map.jpg                → 네이버지도 홈 화면
+  naver_map_directions_4.png   → 길찾기 교통수단 탭 화면
+  naver_map_directions_5.png   → 경로 지도뷰 + 안내시작 화면
+  naver_map_directions_7.png   → 길찾기 도착지 입력 화면
+  naver_map_detail.png         → 장소 상세 (GS25)
+  naver_map_detail_2.png       → 장소 상세 (경희대, 전화 버튼 포함)
+  korail.jpg                   → 코레일 홈 화면
+```
+
+**bbox 좌표 탐색 도구**
+```bash
+# 스크린샷에서 YOLO 탐지 결과를 이미지로 시각화
+python tools/visualize_detections.py db/screenshots/naver_map.jpg
+# → tools/output/naver_map_detected.png 생성 + 터미널에 bbox 좌표 출력
+```
+
+---
+
+### ✅ 7단계 — 3단계 캐시 파이프라인 구현 (완료)
+
+**시퀀스 ⑩~⑬ 담당**
+
+#### Stage 1 — pHash (hash_track.py)
+
+**구현 파일**: `backend/pipeline/hash_track.py` ✅
+
+```python
+HAMMING_THRESHOLD = 8  # 64비트 중 8비트 이하 차이 → 동일 아이콘으로 판정
+
+# 인메모리 스토어: element_id → (phash, description, element_type, app_package)
+_store: dict[str, tuple] = {}
+
+def search(image_bytes: bytes, app_package: str = "") -> dict | None:
+    """pHash 해밍 거리 ≤ 8이면 즉시 설명을 반환합니다 (<1ms).
+
+    Returns:
+        { description, element_type, hamming } 또는 None (캐시 미스).
+    """
+
+def load_from_collection(collection) -> int:
+    """서버 시작 시 ChromaDB의 모든 pHash를 인메모리 스토어로 일괄 로드."""
+
+def register(element_id, ph, description, element_type, app_package) -> None:
+    """Deep Track 저장 직후 실시간 등록 (서버 재시작 없이 즉시 Stage 1 히트 가능)."""
+```
+
+**처리 흐름**
+1. 쿼리 이미지 pHash 계산 (64×64 그레이스케일 DCT)
+2. 인메모리 스토어에서 `app_package` 필터 후 해밍 거리 비교
+3. 해밍 거리 ≤ 8 AND `description` 존재 → `track: "hash"` 즉시 반환
+4. 캐시 미스 → CLIP 임베딩 생성 후 Stage 2로
+
+#### Stage 2 — CLIP 유사도 (fast_track.py)
+
+**구현 파일**: `backend/pipeline/fast_track.py` ✅
+
+```python
+SIMILARITY_THRESHOLD = 0.90
+
+def search(embedding: list[float], app_package: str = "") -> dict | None:
+    """CLIP 코사인 유사도 ≥ 0.90이면 저장된 설명을 반환합니다 (~80ms).
+
+    app_package 필터로 동일 앱 내에서만 검색하여 오탐 방지.
+    (동일 화살표 아이콘이 네이버 지도=우회전, 카카오톡=전달로 다른 의미)
 
     Returns:
         { description, similarity, element_type } 또는 None (캐시 미스).
@@ -200,91 +343,129 @@ def search(embedding: list[float]) -> dict | None:
 ```
 
 **처리 흐름**
-1. 수신 이미지 → CLIP 임베딩
-2. `collection.query(embeddings, n_results=1)` 실행
-3. 유사도 ≥ 0.90 AND `description` 메타데이터 존재 → 캐시 히트 (⑩)
-4. 캐시 미스 → Deep Track 위임 (⑪→⑫)
+1. `collection.query(embeddings, where={"app_package": app_package}, n_results=1)`
+2. `similarity = 1.0 - distance` (ChromaDB cosine 공간)
+3. 유사도 ≥ 0.90 AND `description` 존재 → `track: "fast"` 반환
+4. 캐시 미스 → Stage 3 Deep Track 위임
 
 ---
 
-### 🔄 8단계 — Deep Track (Claude Vision) 구현
+### ✅ 8단계 — Deep Track (Claude Vision) 구현 (완료)
 
-**시퀀스 ⑫~⑭ 담당**
+**시퀀스 ⑬~⑭ 담당**
 
-**목표**: Fast Track 미스 시 Claude Vision으로 설명 생성 후 DB에 캐싱.
-
-**생성 파일**: `backend/pipeline/deep_track.py`
+**구현 파일**: `backend/pipeline/deep_track.py` ✅
 
 ```python
-def analyze(image_bytes: bytes, element_type: str = "unknown") -> str:
+def analyze(
+    image_bytes: bytes,
+    element_type: str = "unknown",
+    app_package: str = "",
+    app_name: str = "",
+) -> str:
     """Claude Vision으로 UI 요소의 노년층 친화적 설명을 생성합니다.
 
-    Args:
-        image_bytes: 크롭된 UI 요소의 PNG 바이트.
-        element_type: 5-1단계에서 탐지된 요소 유형 (프롬프트 컨텍스트로 활용).
-
     Returns:
-        목적 중심 설명 텍스트 (2문장 이내).
+        목적 중심 설명 텍스트 (2문장 이내). 실패 시 "정보를 찾는 중입니다".
     """
 ```
 
-**VLM 프롬프트 (element_type 활용)**
+**VLM 프롬프트 (app_name + element_type 활용)**
 ```
-"이것은 모바일 앱의 {element_type}입니다.
+"이것은 {app_name} 앱의 {element_type}입니다.
 70대 사용자가 이것을 눌렀을 때 어떤 일이 일어나는지,
 쉬운 단어로 2문장 이내로 설명하세요."
 ```
 
-**처리 흐름**
-1. 이미지 base64 인코딩
-2. Claude Vision API 호출 (`claude-sonnet-4-6`)
-3. 설명 텍스트 추출
-4. ChromaDB `description` + `element_type` 메타데이터 저장 (⑭)
-5. 다음 동일 이미지부터 Fast Track 히트 가능
+**앱 이름 매핑 테이블 (`_APP_NAMES`)**
+```python
+"com.nhn.android.nmap"  → "네이버 지도"
+"net.daum.android.map"  → "카카오맵"
+"com.kakao.talk"        → "카카오톡"
+"com.baemin.android"    → "배달의민족"
+"mobi.korail.Talk"      → "코레일"
+# ... 주요 앱 추가 가능
+```
+
+**`/capture` 요청 파라미터 (multipart/form-data)**
+```
+full_image  : 전체 스크린샷 PNG 파일 (신규 방식, 권장)
+crop_x1/y1/x2/y2 : 크롭 영역 물리 픽셀 좌표 (신규 방식)
+file        : 크롭 이미지 PNG 파일 (구버전 폴백, full_image 없을 때만 사용)
+app_package : 앱 패키지명 (예: "com.nhn.android.nmap")
+app_name    : 앱 표시 이름 (예: "네이버 지도")
+```
+
+**`/capture` 응답 형태**
+```json
+{ "track": "hash", "description": "처음 화면으로 돌아가는 버튼이에요.", "element_type": "icon", "confidence": 0.72, "similarity": null, "hamming": 2, "app_name": "배달의민족" }
+{ "track": "fast", "description": "이 버튼은 우회전 경로를 안내해요.", "element_type": "icon", "confidence": 0.84, "similarity": 0.95, "hamming": null, "app_name": "네이버 지도" }
+{ "track": "deep", "description": "이 버튼은 메시지를 전달하는 버튼이에요.", "element_type": "button", "confidence": 0.61, "similarity": null, "hamming": null, "app_name": "카카오톡" }
+{ "track": "error", "description": "정보를 찾는 중입니다", "element_type": null, "confidence": null, "similarity": null, "hamming": null }
+```
+
+| 필드 | 설명 |
+|------|------|
+| `track` | `"hash"` / `"fast"` / `"deep"` / `"error"` |
+| `description` | 노년층 친화적 2문장 이내 설명 |
+| `element_type` | OmniParser 탐지 결과 (`"icon"` / `"button"` / `"text"` / `"unknown"`) |
+| `confidence` | OmniParser YOLOv8 탐지 신뢰도 (0.0~1.0) |
+| `similarity` | CLIP 코사인 유사도 — fast 트랙만 존재, 나머지 null |
+| `hamming` | pHash 해밍 거리 (0~8) — hash 트랙만 존재, 나머지 null |
 
 **필요 환경 변수**
 ```bash
-ANTHROPIC_API_KEY=sk-ant-...
-```
-
-**`/capture` 최종 응답 형태**
-```json
-{ "track": "fast", "description": "...", "element_type": "icon", "similarity": 0.95 }
-{ "track": "deep", "description": "...", "element_type": "button", "similarity": null }
-{ "track": "error", "description": "정보를 찾는 중입니다", "element_type": null }
+export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 ---
 
-### ⬜ 9단계 — 결과 표시 UI + TTS
+### ✅ 9단계 — 결과 표시 UI (완료, TTS 제거됨)
 
-**시퀀스 ⑮~⑰ 담당**
+**시퀀스 ⑮ 담당**
 
-**목표**: 백엔드 분석 결과를 말풍선으로 표시하고 TTS로 읽어줌.
+**구현 파일**
+- `overlay/result_bubble.dart` — 설명 말풍선 위젯 ✅
+- `capture/capture_response.dart` — 백엔드 응답 모델 ✅
 
-**생성 파일**
-- `overlay/result_bubble.dart` — 설명 말풍선 위젯
-- `tts/tts_service.dart` — flutter_tts 패키지 래퍼
+**Flutter 연동**
+- `CaptureSender.send()` → `Future<CaptureResponse>` 반환 (JSON 파싱 포함, timeout 30s)
+- `CaptureSender.detect()` → `Future<List<DetectedUiElement>>` 반환 (/detect 엔드포인트)
+- `FreezeOverlay`: 크롭 확정 후 /detect 결과로 탐지된 UI를 파란 테두리로 표시
+- 사용자가 UI 탭 → `onElementExtracted` 콜백 → `ResultBubble` 표시
+- 말풍선 닫기 시 크롭 초기화 → 다시 선택 가능
 
-**Flutter 연동 변경 사항**
-- `CaptureSender.send()` → `description` 반환값 수신
-- `FreezeOverlay`에서 결과 수신 후 `ResultBubble` 표시 (⑯)
-- 말풍선 표시와 동시에 TTS 재생 (⑰)
+**말풍선 UI 요건 (노년층 접근성) — 구현 완료**
+- 폰트 22sp, 고대비 흰 배경 + 짙은 텍스트
+- 화면 하단 1/3 고정 표시 (`Alignment(0, 0.72)`)
+- 닫기 버튼 터치 영역 56dp
+- track 배지: hash/fast=초록 (#34A853), deep=파랑 (#1A73E8), error=회색 (#9AA0A6)
 
-**말풍선 UI 요건 (노년층 접근성)**
-- 폰트 22sp 이상, 고대비 흰 배경 + 짙은 텍스트
-- 화면 하단 1/3 고정 표시
-- 닫기 버튼 터치 영역 56dp 이상
+**TTS 제거 이유**: 노년층 사용성 테스트 피드백 반영 — 말풍선 텍스트 직접 읽기 방식으로 전환
 
 ---
 
 ### ⬜ 10단계 — 최적화 및 성과 분석
 
-- Fast Track 캐시 히트율 측정
-- CLIP 임베딩 속도 프로파일링 (목표: 1초 이내)
-- TTS 응답 지연 측정
-- 노년층 사용성 테스트 시나리오 정의
-- 5-1단계 Phase 2 (OmniParser YOLOv8) 탐지 정확도 측정 및 conf 임계값 튜닝
+**캐시 히트율 측정 (실기기 연결 필요)**
+- Stage별 히트율 실측: `run_full_test.py --skip_seed`로 반복 측정
+- `SIMILARITY_THRESHOLD` 튜닝 (현재 0.90) — 낮추면 히트율↑ 오탐↑
+- `HAMMING_THRESHOLD` 튜닝 (현재 8) — 높이면 히트율↑ 오매칭↑
+
+**속도 프로파일링**
+- CLIP 임베딩 속도 (목표: 1초 이내, 현재 ~70ms)
+- pHash 계산 속도 (목표: <1ms, 현재 달성)
+- TTS 발화 시작 지연 측정
+
+**탐지 품질 튜닝**
+- OmniParser conf 임계값 (현재 0.05, 전체 스크린샷 기준) — `backend/tests/test_detector.py` 활용
+- margin 파라미터 (현재 10px) — 박스 경계 판정 여유값, 줄이면 정밀↑ 미스↑
+- 전체 스크린샷 탐지 신뢰도 vs 구버전 패딩 방식 비교 측정
+
+**확장**
+- `_APP_NAMES` 매핑 테이블 확장 (카카오맵, 카카오택시 등)
+- seed_db 대상 앱 추가 및 71개 요소 bbox 정확도 검증
+- 노년층 사용성 테스트 시나리오 정의 및 실행
 
 ---
 
@@ -295,20 +476,42 @@ ANTHROPIC_API_KEY=sk-ant-...
 cd frontend/bridge_ui
 flutter pub get          # 의존성 설치
 flutter run              # 개발 실행 (연결된 Android 디바이스 필요)
-flutter build apk        # 프로덕션 빌드
+```
+
+**최초 1회: PACKAGE_USAGE_STATS 권한 허용**
+```
+Android 설정 → 앱 → 특별한 앱 접근 권한 → 사용 정보 접근 → bridge_ui → 허용
 ```
 
 ### Backend (FastAPI)
 ```bash
 cd backend
 
-# 최초 1회
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+# 최초 1회: 가상환경 생성 및 의존성 설치
+python3 -m venv venv
+pip install -r requirements.txt  # python-dotenv 포함
 
-# 서버 실행
-uvicorn main:app --host 0.0.0.0 --port 8000
+# 최초 1회: OmniParser 가중치 다운로드
+venv/bin/python3 -c "from huggingface_hub import hf_hub_download; \
+hf_hub_download('microsoft/OmniParser-v2.0', 'icon_detect/model.pt', local_dir='weights')"
+
+# 최초 1회: API 키 설정 (.env 파일 — gitignore 처리됨)
+echo 'ANTHROPIC_API_KEY=sk-ant-...' > .env
+
+# 최초 1회: ChromaDB 사전 구축 (스크린샷을 db/screenshots/ 에 배치 후 실행)
+venv/bin/python3 db/seed_db.py --dry_run   # 목록 미리 확인 (저장 없음)
+venv/bin/python3 db/seed_db.py             # 94개 요소 CLIP 임베딩 + pHash 저장
+curl http://localhost:8000/db/count        # 저장 수 확인 (94 이상이면 정상)
+
+# YOLO 탐지 결과 시각화 (bbox 좌표 확인용)
+venv/bin/python3 tools/visualize_detections.py db/screenshots/naver_map.jpg
+
+# 캐시 파이프라인 테스트
+venv/bin/python3 tests/run_full_test.py --skip_seed    # DB에 이미 데이터 있을 때
+venv/bin/python3 tests/run_full_test.py                # seed + 테스트 한 번에
+
+# 서버 실행 (가상환경 직접 경로 사용 — PATH 문제 우회)
+venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
 ---
@@ -322,9 +525,14 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 | Vector DB | ChromaDB (cosine 유사도, PersistentClient) |
 | 임베딩 | CLIP `clip-ViT-B-32` (sentence-transformers) |
 | VLM | Claude Vision (`claude-sonnet-4-6`) |
-| UI 탐지 | OmniParser YOLOv8 (`microsoft/OmniParser-v2.0`, nc=1, ~50ms) ✅ |
-| 캡처 | Android MediaProjection API + Flutter MethodChannel |
-| TTS | flutter_tts (예정) |
+| UI 탐지 | OmniParser YOLOv8 (`microsoft/OmniParser-v2.0`, nc=1, 전체 스크린샷 입력) ✅ |
+| UI 선택 UX | `/detect` → 크롭 내 YOLO 박스 파란 테두리 표시 → 사용자 직접 탭 ✅ |
+| 앱 context | Android `UsageStatsManager` (직전 포그라운드 앱 패키지명 수집) ✅ |
+| Stage 1 캐시 | pHash (`imagehash>=4.3.0`) — 인메모리 스토어, 해밍 거리 ≤ 8, <1ms ✅ |
+| DB 사전 구축 | `seed_db.py` — 3개 앱 94개 UI 요소 (다중 스크린샷 지원) ✅ |
+| 환경 변수 | `python-dotenv` — `backend/.env`에서 `ANTHROPIC_API_KEY` 자동 로드 ✅ |
+| 캡처 | Android MediaProjection API + ServiceConnection (Android 16 대응) ✅ |
+| 탐지 시각화 | `tools/visualize_detections.py` — YOLO bbox 시각화 및 seed bbox 탐색 ✅ |
 
 ---
 
@@ -336,30 +544,42 @@ bridgeUI/
 │   └── bridge_ui/
 │       ├── lib/
 │       │   ├── capture/
-│       │   │   ├── capture_model.dart       # CaptureResult 모델
-│       │   │   ├── capture_sender.dart      # 백엔드 POST 전송
-│       │   │   ├── capture_service.dart     # MediaProjection MethodChannel
+│       │   │   ├── capture_response.dart    # CaptureResponse 모델 (track, description, ...)
+│       │   │   ├── capture_sender.dart      # send() + detect() — /capture·/detect 전송
+│       │   │   ├── capture_service.dart     # MediaProjection + getForegroundApp() MethodChannel
+│       │   │   ├── detected_ui_element.dart # DetectedUiElement 모델 (/detect 응답 bbox)
 │       │   │   ├── element_extractor.dart   # dp→px 변환 + 크롭
-│       │   │   ├── extracted_element.dart   # ExtractedElement 모델
-│       │   │   └── ui_scanner.dart          # 탭 위치 기반 영역 추정
+│       │   │   └── extracted_element.dart   # ExtractedElement 모델 (fullScreenshotBytes 포함)
 │       │   ├── overlay/
-│       │   │   ├── freeze_overlay.dart      # 크롭 셀렉터 UI
+│       │   │   ├── freeze_overlay.dart      # /detect 백그라운드 → 파란테두리 UI 선택 오버레이
 │       │   │   ├── trigger_button.dart      # 캡처 트리거 버튼
-│       │   │   └── result_bubble.dart       # ⬜ 예정: 분석 결과 말풍선
-│       │   ├── tts/
-│       │   │   └── tts_service.dart         # ⬜ 예정: TTS 래퍼
-│       │   └── main.dart
+│       │   │   └── result_bubble.dart       # 분석 결과 말풍선 (22sp, 56dp 닫기)
+│       │   └── main.dart                    # onDetect + onElementExtracted 콜백 연결
 │       └── android/
-│           └── .../MainActivity.kt          # MediaProjection 네이티브
+│           ├── app/src/main/AndroidManifest.xml       # PACKAGE_USAGE_STATS + FOREGROUND_SERVICE_MEDIA_PROJECTION
+│           ├── .../MainActivity.kt                    # ServiceConnection 기반 MediaProjection (Android 16 대응)
+│           └── .../MediaProjectionForegroundService.kt # FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
 ├── backend/
 │   ├── db/
-│   │   └── chroma_store.py                  # ChromaDB 싱글턴
+│   │   ├── chroma_store.py                  # ChromaDB 싱글턴
+│   │   ├── seed_db.py                       # ✅ 3개 앱 94개 UI 요소 사전 구축 (다중 스크린샷)
+│   │   └── screenshots/                     # seed용 스크린샷 배치 디렉터리 (gitignore)
 │   ├── pipeline/
-│   │   ├── embedder.py                      # CLIP 임베딩
-│   │   ├── ui_detector.py                   # ✅ 구현됨: 크롭 내 UI/아이콘 탐지 (Phase 1)
-│   │   ├── fast_track.py                    # 🔄 예정: 유사도 검색
-│   │   └── deep_track.py                    # 🔄 예정: Claude Vision 추론
-│   ├── main.py                              # FastAPI 엔드포인트
+│   │   ├── embedder.py                      # CLIP 임베딩 (512차원, warmup 포함)
+│   │   ├── ui_detector.py                   # ✅ OmniParser YOLOv8 Phase 3 (전체 스크린샷 기반)
+│   │   ├── hash_track.py                    # ✅ Stage 1: pHash 인메모리 스토어 (<1ms)
+│   │   ├── fast_track.py                    # ✅ Stage 2: CLIP + app_package 필터 (~80ms)
+│   │   └── deep_track.py                    # ✅ Stage 3: Claude Vision 설명 생성 + ChromaDB 캐싱
+│   ├── tests/
+│   │   ├── test_detector.py                 # OmniParser 탐지 능력 진단 스크립트
+│   │   ├── test_stage2.py                   # Stage 2 CLIP 유사도 히트 검증
+│   │   └── run_full_test.py                 # ✅ 스크린샷 기반 통합 테스트 (seed + Stage 검증)
+│   ├── tools/
+│   │   └── visualize_detections.py          # YOLO 탐지 시각화 (bbox 좌표 탐색용)
+│   ├── weights/
+│   │   └── icon_detect/model.pt             # OmniParser YOLOv8 가중치 (gitignore)
+│   ├── .env                                 # ANTHROPIC_API_KEY (gitignore)
+│   ├── main.py                              # FastAPI: /capture + /detect + /db/count + /
 │   └── requirements.txt
 └── CLAUDE.md
 ```
@@ -376,13 +596,30 @@ bridgeUI/
 
 ### Backend (FastAPI)
 - Vector DB는 **ChromaDB** 사용. 컬렉션은 `get_collection()` 싱글턴으로만 접근할 것.
-- `/capture` 엔드포인트는 항상 `track`, `description` 필드를 포함한 JSON을 반환할 것.
+- `/capture` 엔드포인트는 항상 `track`, `description`, `element_type`, `confidence`, `similarity`, `hamming`, `app_name` 필드를 포함한 JSON을 반환할 것.
+- `/detect` 엔드포인트는 YOLO 탐지만 수행하고 `elements` 배열을 반환할 것 (pHash/CLIP/Claude 호출 없음).
+- `/capture` 수신 시 `full_image`(전체 스크린샷) + `crop_x1/y1/x2/y2`가 있으면 `detect_from_full_screenshot()` 사용, `file`만 있으면 `detect_ui_element()` 구버전 폴백 사용.
+- `detect_from_full_screenshot()`이 반환한 `element_image_bytes`를 pHash·CLIP·Claude Vision 모두에 사용할 것 (사용자 크롭이 아님).
 - Deep Track 호출 실패 시 `"정보를 찾는 중입니다"` 메시지를 반환하고 에러를 노출하지 말 것.
+- Stage 2 (CLIP) 검색 시 반드시 `app_package` 필터를 적용하여 앱 간 오탐을 방지할 것.
+- Stage 1 (pHash) 검색도 `app_package` 필터를 적용할 것 (동일한 아이콘 형태의 오탐 방지).
+- Deep Track 저장 후 `phash_register()`로 인메모리 스토어에 즉시 등록할 것 (서버 재시작 없이 Stage 1 히트 가능).
+- 서버 시작 시 `lifespan`에서 `phash_load(collection)`으로 기존 pHash를 일괄 로드할 것.
+- `ANTHROPIC_API_KEY`는 `backend/.env` 파일로 관리할 것. `main.py` 상단에서 `load_dotenv()` 호출.
+
+### seed_db 유지보수
+- 요소 추가 시 `UIElement` 목록의 `screenshot` 필드에 소속 스크린샷 파일명 지정.
+- 앱 추가/스크린샷 추가 시 `APP_CONFIG`의 `list[str]` 파일명 목록도 함께 업데이트.
+- `bbox=(0,0,0,0)`으로 추가하면 스크린샷 없이도 정의 가능 (시딩 시 자동 스킵).
+- 좌표 기준은 1080×2340px. 다른 해상도 스크린샷은 `scale_bbox()`가 자동 변환.
+- `tools/visualize_detections.py`로 스크린샷 YOLO 탐지 결과를 먼저 확인 후 bbox 입력.
+- `--dry_run` 플래그로 실제 저장 없이 bbox 좌표를 먼저 검증할 것.
+- `screenshots/` 디렉터리는 `.gitignore`에 추가 권장 (개인정보 포함 가능).
 
 ### VLM Prompting
 - ❌ 지양: `"이 버튼의 기능은 무엇인가?"`
-- ✅ 권장: **목적 중심(Purpose-oriented) 프롬프트**
-  - 예시: `"70대 사용자가 이 버튼을 눌렀을 때 얻을 수 있는 이득을 쉬운 단어로 설명하라."`
+- ✅ 권장: **앱 context + 목적 중심(Purpose-oriented) 프롬프트**
+  - 예시: `"이것은 네이버 지도 앱의 icon입니다. 70대 사용자가 이것을 눌렀을 때 어떤 일이 일어나는지, 쉬운 단어로 2문장 이내로 설명하세요."`
 
 ---
 
@@ -422,11 +659,21 @@ def analyze_ui_element(image: bytes, metadata: dict) -> dict:
 코드 생성 전 아래 항목을 확인하세요.
 
 - [ ] 현재 로드맵 단계(섹션 2)에 해당하는 범위의 구현인가?
-- [ ] 4단계 파이프라인(Pre-detection → Extraction → Hybrid Inference → Feedback) 구조를 따르는가?
+- [ ] 3단계 캐시 파이프라인(Stage 1 pHash → Stage 2 CLIP → Stage 3 Deep Track) 순서를 따르는가?
 - [ ] UI 컴포넌트와 비즈니스 로직이 분리되어 있는가?
 - [ ] 모든 함수/클래스에 Docstring이 있는가?
 - [ ] 에러 및 지연 상황에 사용자 친화적 중계 메시지가 있는가?
-- [ ] VLM 프롬프트가 목적 중심(Purpose-oriented)으로 작성되었는가?
+- [ ] VLM 프롬프트가 **앱 이름 + element_type** 컨텍스트를 포함하는가?
+- [ ] Stage 1(pHash)과 Stage 2(CLIP) 검색 모두에 `app_package` 필터가 적용되어 있는가?
+- [ ] Deep Track 저장 후 `phash_register()`로 인메모리 스토어에 즉시 등록하는가?
 - [ ] 프론트엔드 성능(FPS)과 노년층 접근성(폰트 18sp+, 대비, 터치 56dp+)이 고려되었는가?
-- [ ] `/capture` 응답이 `track`, `description` 필드를 포함하는가? (7단계 이후)
+- [ ] `/capture` 응답이 `track`, `description`, `element_type`, `confidence`, `similarity`, `hamming`, `app_name` 필드를 포함하는가?
+- [ ] `/detect` 응답이 `elements` 배열과 `image_width`, `image_height`를 포함하는가?
 - [ ] 5-1단계 탐지 결과(`element_type`)가 Deep Track 프롬프트 컨텍스트로 전달되는가?
+- [ ] `/capture`가 `full_image` 수신 시 `detect_from_full_screenshot()`을 호출하는가?
+- [ ] pHash·CLIP·Claude Vision에 사용자 크롭이 아닌 `element_image_bytes`(YOLO 추출)를 사용하는가?
+- [ ] `ExtractedElement`에 `fullScreenshotBytes`와 `cropPx*` 좌표가 모두 포함되어 있는가?
+- [ ] seed_db 요소 추가 시 `UIElement.screenshot` 필드와 `APP_CONFIG` 파일 목록을 모두 업데이트하는가?
+- [ ] ChromaDB 메타데이터에 `phash` 필드가 포함되어 있는가?
+- [ ] Android 16 대응: `MediaProjectionForegroundService`가 `ServiceConnection.onServiceConnected`에서 시작되는가?
+- [ ] `ANTHROPIC_API_KEY`가 `backend/.env`로 관리되고 코드에 직접 삽입되지 않는가?

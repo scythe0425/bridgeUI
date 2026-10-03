@@ -1,14 +1,15 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'capture/capture_response.dart';
 import 'capture/capture_sender.dart';
 import 'capture/capture_service.dart';
+import 'capture/detected_ui_element.dart';
 import 'capture/extracted_element.dart';
 import 'overlay/freeze_overlay.dart';
 import 'overlay/trigger_button.dart';
 
-/// 개발 중 서버 주소. 실기기에서는 PC의 실제 IP를 입력하세요.
-/// 예: 'http://192.168.x.x:8000'
-const _serverUrl = 'http://192.168.45.3:8000'; // S23 실기기용 Windows WiFi IP
+/// ADB reverse 터널링 사용 시 localhost:8000 → WSL2 서버 8000 포트로 자동 연결
+const _serverUrl = 'http://localhost:8001'; // ADB reverse: 기기 8001 → WSL2 8000
 
 void main() {
   runApp(const BridgeUIApp());
@@ -66,13 +67,11 @@ class _BridgeUIHomeState extends State<BridgeUIHome> {
     }
   }
 
-  Future<void> _onElementExtracted(ExtractedElement element) async {
-    try {
-      await _sender.send(element);
-    } catch (_) {
-      // 전송 실패는 UI를 방해하지 않도록 조용히 처리
-    }
-  }
+  Future<CaptureResponse> _onElementExtracted(ExtractedElement element) =>
+      _sender.send(element);
+
+  Future<List<DetectedUiElement>> _onDetect(Uint8List imageBytes) =>
+      _sender.detect(imageBytes);
 
   void _onDismiss() {
     setState(() {
@@ -90,6 +89,7 @@ class _BridgeUIHomeState extends State<BridgeUIHome> {
         imageBytes: _frozenScreen!,
         appPackage: _appPackage,
         appName: _appName,
+        onDetect: _onDetect,
         onElementExtracted: _onElementExtracted,
         onDismiss: _onDismiss,
       );
