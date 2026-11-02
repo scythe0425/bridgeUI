@@ -1,11 +1,12 @@
 import base64
+import logging
 import uuid
 from datetime import datetime
 from contextlib import asynccontextmanager
 from typing import Optional
 
 from dotenv import load_dotenv
-load_dotenv()  # backend/.env 에서 ANTHROPIC_API_KEY 로드
+load_dotenv()  # backend/.env 에서 API 키 로드 (1순위 GEMINI_API_KEY, 2순위 ANTHROPIC_API_KEY)
 
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import HTMLResponse
@@ -13,7 +14,7 @@ from fastapi.responses import HTMLResponse
 from db.chroma_store import get_collection
 from pipeline.embedder import embed_image
 from pipeline.embedder import warmup as warmup_clip
-from pipeline.ui_detector import detect_from_full_screenshot, detect_ui_element
+from pipeline.ui_detector import detect_all, detect_from_full_screenshot, detect_ui_element
 from pipeline.ui_detector import warmup as warmup_yolo
 from pipeline.hash_track import (
     compute as phash_compute,
@@ -23,7 +24,9 @@ from pipeline.hash_track import (
     to_str as phash_to_str,
 )
 from pipeline.fast_track import search as fast_search
-from pipeline.deep_track import analyze as deep_analyze
+from pipeline.deep_track import FALLBACK_MESSAGE, analyze as deep_analyze, is_valid_description
+
+logger = logging.getLogger("bridgeui")
 
 # 앱 카테고리: 같은 카테고리 내 앱끼리 Stage 1/2 캐시를 공유합니다.
 # 지도 앱은 "길찾기" 버튼 등 동일한 UI·동작을 공유하므로 같은 그룹으로 묶습니다.
@@ -60,13 +63,73 @@ def _get_category_packages(app_package: str) -> list[str]:
     return [app_package] if app_package else []
 
 
+# 뷰어 표시 및 /db/reanalyze용 마지막 요청 상태 (단일 사용자 개발 환경 기준)
 _latest_image_b64: str | None = None
 _latest_image_bytes: bytes | None = None      # 재분석용 element 원본 바이트
 _latest_full_image_bytes: bytes | None = None # 재분석용 전체 스크린샷 바이트
-_latest_doc_id: str | None = None             # ChromaDB 문서 ID (재분석 시 업데이트)
+_latest_app_package: str = ""                 # 재분석 저장용 패키지명 (표시 이름과 분리)
+_latest_app_name: str = ""                    # 재분석 프롬프트용 앱 표시 이름
+_latest_doc_id: str | None = None             # 이번 요청이 Deep Track으로 새로 저장한 문서 ID
+_latest_match: dict | None = None             # Stage 1/2 히트 시 {"id", "track", "hamming"}
 _captured_at: str | None = None
 _latest_detection: dict | None = None
 _latest_response: dict | None = None
+
+
+def _error_response(app_name: str, element_type: str | None = None,
+                    confidence: float | None = None) -> dict:
+    """사용자에게 보여줄 중계 메시지 응답을 만듭니다 (내부 오류 내용은 포함하지 않음)."""
+    return {
+        "track": "error",
+        "description": FALLBACK_MESSAGE,
+        "element_type": element_type,
+        "confidence": confidence,
+        "similarity": None,
+        "hamming": None,
+        "app_name": app_name,
+    }
+
+
+def _save_new_entry(image_bytes: bytes, vector: list[float] | None, description: str,
+                    element_type: str, confidence: float | None, description_hint: str,
+                    app_package: str, app_name: str, filename: str) -> str:
+    """Deep Track 결과를 ChromaDB와 인메모리 pHash 스토어에 함께 저장합니다.
+
+    Args:
+        image_bytes: 저장할 요소 이미지 (pHash·CLIP 계산 대상).
+        vector: 이미 계산한 CLIP 벡터. None이면 여기서 계산합니다.
+        description: 검증을 통과한 설명 문장.
+        element_type: 요소 유형.
+        confidence: YOLO 탐지 신뢰도.
+        description_hint: 요소 유형 힌트.
+        app_package: 앱 패키지명 (캐시 검색 필터 기준이므로 표시 이름을 넣으면 안 됨).
+        app_name: 앱 표시 이름.
+        filename: 메타데이터용 파일명.
+
+    Returns:
+        새로 만든 문서 ID.
+    """
+    collection = get_collection()
+    doc_id = str(uuid.uuid4())
+    ph = phash_compute(image_bytes)
+    collection.add(
+        ids=[doc_id],
+        embeddings=[vector if vector is not None else embed_image(image_bytes)],
+        metadatas=[{
+            "captured_at": _captured_at or "",
+            "filename": filename,
+            "element_type": element_type,
+            "confidence": confidence,
+            "description_hint": description_hint,
+            "description": description,
+            "app_package": app_package,
+            "app_name": app_name,
+            "phash": phash_to_str(ph),
+        }],
+    )
+    # 인메모리 pHash 스토어에도 즉시 등록 (다음 요청부터 Stage 1 히트 가능)
+    phash_register(doc_id, ph, description, element_type, app_package)
+    return doc_id
 
 
 @asynccontextmanager
@@ -83,8 +146,10 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="bridgeUI Capture Viewer", lifespan=lifespan)
 
 
+# 엔드포인트는 일반 def로 선언합니다. FastAPI가 스레드풀에서 실행하므로
+# YOLO·CLIP 계산이나 Gemini 재시도 대기 중에도 다른 요청(/detect 등)이 막히지 않습니다.
 @app.post("/capture")
-async def receive_capture(
+def receive_capture(
     full_image: Optional[UploadFile] = File(default=None),
     file: Optional[UploadFile] = File(default=None),
     crop_x1: int = Form(default=0),
@@ -97,9 +162,10 @@ async def receive_capture(
     """Flutter 앱에서 전송된 이미지를 수신하고 3단계 캐시 파이프라인을 실행합니다.
 
     처리 순서:
-      STAGE 1 — pHash (Perceptual Hash): 해밍 거리 ≤ 8 → <1ms, track: "hash"
-      STAGE 2 — CLIP 유사도: 코사인 ≥ 0.90 + app_package 필터 → ~50ms, track: "fast"
-      STAGE 3 — Claude Vision (Deep Track): 신규 설명 생성 → 1~3s, track: "deep"
+      STAGE 1 — pHash: 해밍 거리 ≤ 8(동일앱) / ≤ 4(크로스앱) → <1ms, track: "hash"
+      STAGE 2 — CLIP 유사도: 코사인 ≥ 0.91(동일앱) / ≥ 0.95(크로스앱) → ~80ms, track: "fast"
+      STAGE 3 — Gemini Vision (Deep Track): 신규 설명 생성 → 1~3s, track: "deep"
+    Stage 1/2는 설명이 다른 후보와 점수가 너무 가까우면 미스로 처리합니다.
 
     신규 방식: full_image(전체 스크린샷) + crop 좌표 → YOLO 전체 탐지 후 크롭 내 최적 요소 선택.
     구버전 폴백: file(크롭 이미지)만 전송 → 캔버스 패딩 후 탐지.
@@ -112,11 +178,15 @@ async def receive_capture(
         app_name: 캡처 앱의 사용자 표시 이름 (예: "네이버 지도").
 
     Returns:
-        { track, description, element_type, confidence, similarity, hamming, app_name }
+        { track, description, element_type, confidence, similarity, hamming, app_name,
+          cross_app, fallback } — 오류 시 track "error"와 중계 메시지.
     """
-    global _latest_image_b64, _latest_image_bytes, _latest_full_image_bytes, _latest_doc_id, _captured_at, _latest_detection, _latest_response
+    global _latest_image_b64, _latest_image_bytes, _latest_full_image_bytes, _latest_doc_id
+    global _latest_match, _latest_app_package, _latest_app_name
+    global _captured_at, _latest_detection, _latest_response
 
     _captured_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    display_name = app_name or app_package
 
     try:
         # ① UI 요소 탐지 — 신규(전체 스크린샷) 또는 구버전(크롭) 방식 선택
@@ -127,31 +197,25 @@ async def receive_capture(
         )
 
         if use_full:
-            full_data = await full_image.read()
+            full_data = full_image.file.read()
             detection = detect_from_full_screenshot(
                 full_data, crop_x1, crop_y1, crop_x2, crop_y2
             )
             data = detection["element_image_bytes"]
-            _latest_full_image_bytes = full_data
         elif file is not None:
             full_data = None
-            data = await file.read()
+            data = file.file.read()
             detection = detect_ui_element(data)
-            _latest_full_image_bytes = None
         else:
-            return {
-                "track": "error",
-                "description": "정보를 찾는 중입니다",
-                "element_type": None,
-                "confidence": None,
-                "similarity": None,
-                "hamming": None,
-                "app_name": app_name or app_package,
-            }
+            return _error_response(display_name)
 
+        _latest_full_image_bytes = full_data
         _latest_image_b64 = base64.b64encode(data).decode()
         _latest_image_bytes = data
-        _latest_doc_id = None  # Deep Track 저장 시 갱신
+        _latest_app_package = app_package
+        _latest_app_name = app_name
+        _latest_doc_id = None   # Deep Track 저장 시 갱신
+        _latest_match = None    # Stage 1/2 히트 시 갱신
         _latest_detection = detection
         element_type = detection["element_type"]
         confidence = float(detection["confidence"]) if detection["confidence"] is not None else None
@@ -161,9 +225,11 @@ async def receive_capture(
 
         fallback = detection.get("fallback", False)
 
-        # STAGE 1: pHash — 해밍 거리 ≤ 8(동일앱) / ≤ 4(크로스앱)이면 즉시 반환 (<1ms)
+        # STAGE 1: pHash
         hash_result = hash_search(data, app_packages=category_packages, own_package=app_package)
         if hash_result:
+            _latest_match = {"id": hash_result["id"], "track": "hash",
+                             "hamming": int(hash_result["hamming"])}
             response = {
                 "track": "hash",
                 "description": hash_result["description"],
@@ -171,19 +237,20 @@ async def receive_capture(
                 "confidence": confidence,
                 "similarity": None,
                 "hamming": int(hash_result["hamming"]),
-                "app_name": app_name or app_package,
+                "app_name": display_name,
                 "cross_app": hash_result.get("cross_app", False),
                 "fallback": fallback,
             }
             _latest_response = response
             return response
 
-        # ② CLIP 임베딩 생성 (~50ms)
+        # ② CLIP 임베딩 생성
         vector = embed_image(data)
 
-        # STAGE 2: CLIP 유사도 — 코사인 ≥ 0.90(동일앱) / ≥ 0.95(크로스앱)이면 반환
+        # STAGE 2: CLIP 유사도
         fast_result = fast_search(vector, app_packages=category_packages, own_package=app_package)
         if fast_result:
+            _latest_match = {"id": fast_result["id"], "track": "fast", "hamming": None}
             response = {
                 "track": "fast",
                 "description": fast_result["description"],
@@ -191,59 +258,32 @@ async def receive_capture(
                 "confidence": confidence,
                 "similarity": float(fast_result["similarity"]),
                 "hamming": None,
-                "app_name": app_name or app_package,
+                "app_name": display_name,
                 "cross_app": fast_result.get("cross_app", False),
                 "fallback": fallback,
             }
             _latest_response = response
             return response
 
-        # STAGE 3: Deep Track — Gemini Vision으로 신규 설명 생성 (1~3s)
-        # full_data(전체 스크린샷)를 함께 전달하여 화면 맥락 기반 정확한 설명 생성
+        # STAGE 3: Deep Track — 전체 스크린샷을 함께 전달하여 화면 맥락 기반 설명 생성
         description = deep_analyze(
             data,
             element_type=element_type,
             app_package=app_package,
             app_name=app_name,
-            full_image_bytes=full_data if use_full else None,
+            full_image_bytes=full_data,
         )
 
-        # Gemini 실패 시 DB 저장 없이 에러 응답 반환
-        if description is None:
-            err = {
-                "track": "error",
-                "description": "정보를 찾는 중입니다",
-                "element_type": element_type,
-                "confidence": confidence,
-                "similarity": None,
-                "hamming": None,
-                "app_name": app_name or app_package,
-            }
-            _latest_response = err
-            return err
+        # 실패·중계 메시지·잘린 응답은 저장하지 않고 중계 메시지만 반환
+        if not is_valid_description(description):
+            _latest_response = _error_response(display_name, element_type, confidence)
+            return _latest_response
 
-        # ChromaDB 저장 (pHash + CLIP 벡터 + 설명 모두 저장)
-        collection = get_collection()
-        doc_id = str(uuid.uuid4())
-        ph = phash_compute(data)
-        collection.add(
-            ids=[doc_id],
-            embeddings=[vector],
-            metadatas=[{
-                "captured_at": _captured_at,
-                "filename": (file.filename if file else None) or "capture.png",
-                "element_type": element_type,
-                "confidence": confidence,
-                "description_hint": detection.get("description_hint", ""),
-                "description": description,
-                "app_package": app_package,
-                "app_name": app_name,
-                "phash": phash_to_str(ph),
-            }],
+        _latest_doc_id = _save_new_entry(
+            data, vector, description, element_type, confidence,
+            detection.get("description_hint", ""), app_package, app_name,
+            (file.filename if file else None) or "capture.png",
         )
-        # 인메모리 pHash 스토어에도 즉시 등록 (다음 요청부터 Stage 1 히트 가능)
-        phash_register(doc_id, ph, description, element_type, app_package)
-        _latest_doc_id = doc_id
 
         response = {
             "track": "deep",
@@ -252,30 +292,22 @@ async def receive_capture(
             "confidence": confidence,
             "similarity": None,
             "hamming": None,
-            "app_name": app_name or app_package,
+            "app_name": display_name,
             "cross_app": False,
             "fallback": fallback,
         }
         _latest_response = response
         return response
 
-    except Exception as e:
-        err = {
-            "track": "error",
-            "description": "정보를 찾는 중입니다",
-            "element_type": None,
-            "confidence": None,
-            "similarity": None,
-            "hamming": None,
-            "app_name": app_name or app_package,
-            "detail": str(e),
-        }
-        _latest_response = err
-        return err
+    except Exception:
+        # 원인은 서버 로그에만 남기고, 사용자에게는 중계 메시지만 보냅니다.
+        logger.exception("[/capture] 처리 실패")
+        _latest_response = _error_response(display_name)
+        return _latest_response
 
 
 @app.post("/detect")
-async def detect_elements(
+def detect_elements(
     full_image: UploadFile = File(...),
 ) -> dict:
     """전체 스크린샷에서 UI 요소를 YOLO로 탐지하여 bbox 목록만 반환합니다 (분석 없음).
@@ -293,113 +325,76 @@ async def detect_elements(
         }
     """
     try:
-        from PIL import Image as PILImage
-        import io as _io
-        from pipeline.ui_detector import _get_model, _classify_by_geometry
-
-        image_data = await full_image.read()
-        img = PILImage.open(_io.BytesIO(image_data)).convert("RGB")
-
-        results = _get_model().predict(img, verbose=False, conf=0.3)
-        all_boxes = results[0].boxes if results else None
-
-        elements = []
-        if all_boxes and len(all_boxes) > 0:
-            for i in range(len(all_boxes)):
-                x1, y1, x2, y2 = [float(v) for v in all_boxes.xyxy[i].tolist()]
-                conf = float(all_boxes.conf[i])
-                el_type = _classify_by_geometry(x1, y1, x2, y2)
-                elements.append({
-                    "x1": int(x1), "y1": int(y1),
-                    "x2": int(x2), "y2": int(y2),
-                    "conf": round(conf, 3),
-                    "type": el_type,
-                })
-
-        return {
-            "elements": elements,
-            "image_width": img.width,
-            "image_height": img.height,
-        }
-    except Exception as e:
-        return {"elements": [], "image_width": 0, "image_height": 0, "error": str(e)}
+        return detect_all(full_image.file.read(), conf=0.3)
+    except Exception:
+        logger.exception("[/detect] 탐지 실패")
+        return {"elements": [], "image_width": 0, "image_height": 0}
 
 
 @app.post("/db/reanalyze")
-async def reanalyze() -> dict:
-    """마지막 캡처 이미지를 Stage 3(Gemini)으로 재분석하여 ChromaDB 설명을 덮어씁니다.
+def reanalyze() -> dict:
+    """마지막 캡처를 Stage 3(Gemini)으로 재분석해 캐시의 잘못된 설명을 바로잡습니다.
 
-    잘못 캐싱된 설명("정보를 찾는 중입니다" 등)을 올바른 설명으로 교체합니다.
+    어떤 항목을 고칠지는 마지막 요청의 결과에 따라 다릅니다.
+      - Deep Track으로 새로 저장했던 경우: 그 문서의 설명을 덮어씁니다.
+      - Stage 1에서 해밍 거리 0으로 히트한 경우: 같은 이미지이므로 매칭 문서를 덮어씁니다.
+      - 그 외(해밍 거리 > 0, Stage 2 히트, 오류): 매칭 문서는 다른 이미지의 정답일 수 있으므로
+        건드리지 않고, 현재 이미지로 새 문서를 추가합니다. 새 문서는 해밍 거리 0이라
+        다음 요청부터 Stage 1에서 먼저 선택됩니다.
 
     Returns:
-        { ok, description, doc_id } 또는 { ok: false, error }
+        { ok, description, doc_id, action } 또는 { ok: false, error }
     """
-    global _latest_response
+    global _latest_response, _latest_doc_id
 
     if _latest_image_bytes is None:
         return {"ok": False, "error": "재분석할 캡처 이미지가 없습니다."}
 
-    response_meta = _latest_response or {}
-    app_package = response_meta.get("app_name", "")   # app_name 필드에 패키지가 올 수도 있음
-    app_name    = response_meta.get("app_name", "")
     element_type = ((_latest_detection or {}).get("element_type") or "unknown")
 
     # Stage 3 강제 실행 (최대 3회 재시도 포함, 전체 스크린샷 맥락 포함)
     description = deep_analyze(
         _latest_image_bytes,
         element_type=element_type,
-        app_package=app_package,
-        app_name=app_name,
+        app_package=_latest_app_package,
+        app_name=_latest_app_name,
         full_image_bytes=_latest_full_image_bytes,
     )
 
-    if description is None:
+    if not is_valid_description(description):
         return {"ok": False, "error": "Gemini 분석 실패 — 잠시 후 다시 시도하세요."}
 
-    collection = get_collection()
+    target_id = _latest_doc_id
+    if target_id is None and _latest_match and _latest_match["track"] == "hash" \
+            and _latest_match["hamming"] == 0:
+        target_id = _latest_match["id"]
 
-    # 기존 문서가 있으면 업데이트, 없으면 새로 추가
-    if _latest_doc_id:
-        try:
-            collection.update(
-                ids=[_latest_doc_id],
-                metadatas=[{**collection.get(ids=[_latest_doc_id])["metadatas"][0], "description": description}],
+    try:
+        if target_id:
+            collection = get_collection()
+            meta = collection.get(ids=[target_id], include=["metadatas"])["metadatas"][0]
+            collection.update(ids=[target_id], metadatas=[{**meta, "description": description}])
+            phash_register(target_id, phash_compute(_latest_image_bytes), description,
+                           meta.get("element_type", element_type), meta.get("app_package", ""))
+            action = "updated"
+        else:
+            target_id = _save_new_entry(
+                _latest_image_bytes, None, description, element_type,
+                float((_latest_detection or {}).get("confidence") or 0),
+                "", _latest_app_package, _latest_app_name, "reanalyzed.png",
             )
-            # 인메모리 pHash 스토어도 갱신
-            existing = collection.get(ids=[_latest_doc_id])
-            meta = existing["metadatas"][0]
-            ph = phash_compute(_latest_image_bytes)
-            phash_register(_latest_doc_id, ph, description, element_type, meta.get("app_package", ""))
-        except Exception as e:
-            return {"ok": False, "error": f"ChromaDB 업데이트 실패: {e}"}
-    else:
-        # Deep Track으로 새로 저장 (hash/fast 트랙 캡처였던 경우)
-        vector = embed_image(_latest_image_bytes)
-        doc_id = str(uuid.uuid4())
-        ph = phash_compute(_latest_image_bytes)
-        collection.add(
-            ids=[doc_id],
-            embeddings=[vector],
-            metadatas=[{
-                "captured_at": _captured_at or "",
-                "filename": "reanalyzed.png",
-                "element_type": element_type,
-                "confidence": float((_latest_detection or {}).get("confidence") or 0),
-                "description_hint": "",
-                "description": description,
-                "app_package": app_package,
-                "app_name": app_name,
-                "phash": phash_to_str(ph),
-            }],
-        )
-        phash_register(doc_id, ph, description, element_type, app_package)
+            _latest_doc_id = target_id
+            action = "added"
+    except Exception:
+        logger.exception("[/db/reanalyze] 저장 실패")
+        return {"ok": False, "error": "저장 중 문제가 생겼습니다. 잠시 후 다시 시도하세요."}
 
     # 뷰어에 즉시 반영
     if _latest_response:
         _latest_response["description"] = description
         _latest_response["track"] = "deep"
 
-    return {"ok": True, "description": description, "doc_id": _latest_doc_id}
+    return {"ok": True, "description": description, "doc_id": target_id, "action": action}
 
 
 @app.get("/db/count")

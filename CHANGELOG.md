@@ -1,7 +1,95 @@
 # CHANGELOG — bridgeUI (2026.05.11 이후)
 
 > 브랜치 기준: `claude` / `feature/multistage-cache`  
-> 기간: 2026-05-11 ~ 2026-05-18
+> 기간: 2026-05-11 ~ 2026-11-02 (최신 항목이 위, 05-18 이전 항목은 시간순)
+
+---
+
+## 2026-11-02
+
+### Step 10 — 캐시 정확도 평가셋 + 오탐 대응
+
+| 커밋 | 변경 내용 |
+|------|-----------|
+| `5b6395b` | `tests/eval_cache.py` 평가셋 (네이버지도 스크린샷 8장, 박스 289개), search 결과에 매칭 문서 `id` 추가 |
+| `eee62c5` | Stage 1/2 모호성 거부 (`HAMMING_MARGIN=1`, `SIMILARITY_MARGIN=0.02`, 상위 5개 조회), `SIMILARITY_THRESHOLD` 0.90 → 0.91 |
+| `3cef687` | `is_valid_description()` 단일 검증 규칙, 저장 직전 검증, `tools/clean_db.py` — 오염 항목 7개 삭제 |
+| `89b52ec` | 어긋난 seed bbox 71개 재지정 후 재시딩 (중복 9쌍 해소), 테스트 3개의 search 호출부 수정 |
+| `b903539` | `/db/reanalyze` 대상 수정(패키지명·표시 이름 분리), 엔드포인트 스레드풀 실행 + YOLO 잠금, 오류 원문 비노출, 빈 DB 폴더 삭제 |
+
+**평가 결과**: 틀린 캐시 히트 131개 → 20개, 맞는 히트 31개 → 29개 (상세는 `REPORT.md` §3.6)
+
+**미진행**: 직전 앱 감지·캡처 대상·캡처 해상도 점검은 실기기 연결이 필요해 보류
+
+---
+
+## 2026-06-24
+
+### Step 10 — 크로스앱 이중 임계값 + conf 측정 도구 (`ba9c296`)
+
+| 파일 | 변경 내용 |
+|------|-----------|
+| `backend/pipeline/hash_track.py` | 다른 앱 항목과 매칭 시 해밍 임계값 강화 (≤ 8 → ≤ 4, `CROSS_APP_HAMMING_THRESHOLD`) |
+| `backend/pipeline/fast_track.py` | 다른 앱 항목과 매칭 시 유사도 임계값 강화 (≥ 0.90 → ≥ 0.95, `CROSS_APP_SIMILARITY_THRESHOLD`) |
+| `backend/main.py` | `_APP_CATEGORIES` 앱 카테고리 도입 — 같은 카테고리 앱끼리 Stage 1/2 캐시 공유 (지도·메시지·배달·교통 4개 그룹) |
+| `backend/main.py` | `own_package` 전달, 응답에 `cross_app`·`fallback` 필드 추가 |
+| `backend/tests/test_detector.py` | 합성 스윕 + 실제 seed 스크린샷 conf 분포 + `/capture`(0.05) vs `/detect`(0.3) 비교 |
+| `README.md`, `REPORT.md` | 현재 코드 기준 최신화, 성능 평가 보고서 신규 작성 |
+
+---
+
+## 2026-06-01
+
+### Stage 3 VLM 교체 — Claude Vision → Gemini 2.5 Flash (`9287bf5`, `2deee19`)
+
+| 파일 | 변경 내용 |
+|------|-----------|
+| `backend/pipeline/deep_track.py` | `anthropic` → `google-genai` SDK, `system_instruction`·few-shot 예시 2개, `temperature 0.2`, `max_output_tokens 300` |
+| `backend/pipeline/deep_track.py` | 전체 스크린샷 + 요소 이미지를 함께 전달 (화면 맥락 기반 설명) |
+| `backend/pipeline/deep_track.py` | 최대 3회 재시도 (3s, 6s), 길이·종결어미 검증, 실패 시 `None` 반환 → DB 저장 차단 |
+| `backend/pipeline/deep_track.py` | 구글 지도·티맵 앱 이름 매핑 추가 |
+| `backend/main.py` | `/db/reanalyze` 엔드포인트 + 뷰어 재분석 버튼, numpy 타입 직렬화 오류 수정 |
+| `frontend/.../main.dart` | `_serverUrl = 'http://localhost:8001'` (ADB reverse 터널 대응) |
+| `frontend/.../freeze_overlay.dart` | 오버레이 종료 X 버튼 우상단 → 좌하단 이동 |
+| `backend/requirements.txt` | `anthropic` → `google-genai` |
+
+### API 키 관리 — `backend/.env` 자동 로드 (`3e79aca`)
+
+- `main.py` 상단에서 `load_dotenv()` 호출.
+- 키 우선순위: **1순위 `GEMINI_API_KEY`** (Stage 3 필수), **2순위 `ANTHROPIC_API_KEY`** (예비 키).
+- 현재 `deep_track.py`는 `GEMINI_API_KEY`만 읽으며 2순위 키로 자동 전환하는 코드는 없음.
+- `python-dotenv`는 `requirements.txt`의 `uvicorn[standard]` 의존성으로 설치됨.
+
+### YOLO 기반 UI 선택 오버레이 + seed DB 확장 + Android 16 캡처 수정 (`0fc167e`)
+
+| 영역 | 변경 내용 |
+|------|-----------|
+| 백엔드 | `/detect` 엔드포인트 추가 — 전체 스크린샷 → YOLO bbox 목록 (분석 없음, conf 0.3) |
+| 백엔드 | `seed_db` 다중 스크린샷 지원 (`UIElement.screenshot`, `APP_CONFIG` list 구조), 네이버지도 17 → 40개 (총 94개) |
+| 백엔드 | `tools/visualize_detections.py` — YOLO 탐지 시각화 도구 |
+| 프론트 | `FreezeOverlay`: /detect 백그라운드 병렬 실행 → 크롭 내 탐지 UI만 파란 테두리 → 사용자 직접 탭 |
+| 프론트 | `DetectedUiElement` 모델 + `CaptureSender.detect()` 추가 |
+| 프론트 | **TTS 전체 제거** (`tts_service.dart` 삭제, `flutter_tts` 제거), hash 트랙 배지 추가 |
+| Android | Android 16 MediaProjection 크래시 수정 — `FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION`, FGS를 `ServiceConnection.onServiceConnected`에서 시작 |
+
+---
+
+## 2026-05-31
+
+### 탐지 Phase 3 — 전체 스크린샷 기반 YOLO 탐지 (`5758bc9`, `a9fe270`)
+
+**배경**: 크롭 이미지 캔버스 패딩 방식(Phase 2)은 conf가 낮고 저장·조회 크롭이 달라 pHash 히트율이 낮았음.
+
+| 파일 | 변경 내용 |
+|------|-----------|
+| `frontend/.../extracted_element.dart` | `fullScreenshotBytes` + 물리 px 크롭 좌표(`cropPx*`) 추가 |
+| `frontend/.../capture_sender.dart` | `full_image` + `crop_x1/y1/x2/y2` multipart 전송 (없으면 `file` 폴백) |
+| `backend/pipeline/ui_detector.py` | `detect_from_full_screenshot()` — 전체 화면 YOLO(conf 0.05) 후 **크롭 중심 최근접 박스** 선택 (inside → margin 20px near → fallback) |
+| `backend/main.py` | `full_image` 수신 시 신규 방식, `file`만 있으면 `detect_ui_element()` 폴백 |
+| `backend/db/seed_db.py` | 시딩도 `detect_from_full_screenshot()`으로 YOLO 크롭 후 저장, `add` → `upsert` |
+| `backend/tests/run_full_test.py` | Phase 3 탐지 기반으로 전환 |
+
+**결과**: 저장·조회 크롭 통일로 pHash 해밍 거리 0, 테스트 9/9 Stage 1 히트 (평균 0.97ms). 캐시 히트율 44% → 100%.
 
 ---
 
@@ -216,7 +304,7 @@ STAGE 2 (CLIP)  : 0/9
 
 ---
 
-## 현재 브랜치 상태
+## 브랜치 상태 (2026-05-18 기준)
 
 | 브랜치 | 내용 |
 |--------|------|
@@ -224,11 +312,15 @@ STAGE 2 (CLIP)  : 0/9
 | `claude` | Step 5-1, 7~8 반영 |
 | `feature/multistage-cache` | Step 6-1, 9, pHash 파이프라인 전체 반영 — PR #3 오픈 중 |
 
-## 다음 단계 (Step 10)
+> 05-31 이후 작업(Phase 3 탐지, Gemini 전환, 크로스앱 캐시)은 모두 `feature/multistage-cache`에 커밋되었습니다.
 
-- [ ] Fast Track 캐시 히트율 측정 및 `SIMILARITY_THRESHOLD` 튜닝
-- [ ] CLIP 임베딩 속도 프로파일링 (목표 1초 이내)
-- [ ] OmniParser YOLOv8 conf 임계값 튜닝
+## 다음 단계 (Step 10, 2026-06-24 갱신)
+
+- [ ] Stage별 히트율·응답시간 실측 및 `SIMILARITY_THRESHOLD`·`HAMMING_THRESHOLD` 튜닝
+- [x] CLIP 임베딩 속도 프로파일링 (목표 1초 이내 → 약 70ms 달성)
+- [x] OmniParser YOLOv8 conf 측정 도구 (`test_detector.py`) — 튜닝은 실측 후 진행
 - [ ] Android 디바이스 end-to-end 테스트
-- [ ] TTS 응답 지연 측정
+- [x] ~~TTS 응답 지연 측정~~ — TTS 제거로 해당 없음
 - [ ] seed_db 대상 앱 확장 (카카오맵, 카카오택시 등)
+- [ ] 모양이 다른 동일 기능 UI의 역할 기반 매칭
+- [ ] 2순위 `ANTHROPIC_API_KEY`(Claude Vision)로의 자동 폴백 구현

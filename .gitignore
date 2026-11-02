@@ -20,7 +20,7 @@
 **/backend/venv/
 **/backend/env/
 **/backend/.env
-**/backend/chroma_data/
+**/chroma_data/
 **/backend/weights/
 **/backend/db/screenshots/
 
@@ -40,3 +40,6 @@
 android-sdk/
 *.pem
 *.key
+# 평가용 크롭·시트 (스크린샷에서 재생성 가능)
+**/backend/tests/eval/crops/
+**/backend/tests/eval/sheets/

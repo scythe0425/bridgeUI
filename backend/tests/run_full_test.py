@@ -156,7 +156,7 @@ def run_cache_test(
 
         # ── STAGE 1: pHash ──────────────────────────
         t0 = time.perf_counter()
-        hash_result = hash_search(element_bytes, app_package=app_package)
+        hash_result = hash_search(element_bytes, app_packages=[app_package] if app_package else None, own_package=app_package)
         ms1 = (time.perf_counter() - t0) * 1000
 
         if hash_result:
@@ -176,7 +176,7 @@ def run_cache_test(
         clip_ms = (time.perf_counter() - t0) * 1000
 
         t0 = time.perf_counter()
-        fast_result = fast_search(vector, app_package=app_package)
+        fast_result = fast_search(vector, app_packages=[app_package] if app_package else None, own_package=app_package)
         ms2 = (time.perf_counter() - t0) * 1000
 
         if fast_result:

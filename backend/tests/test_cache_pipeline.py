@@ -179,7 +179,7 @@ def cmd_test(images: list[Path], app_package: str) -> None:
 
         # ── STAGE 1: pHash ────────────────────────
         t0 = time.perf_counter()
-        hash_result = hash_search(data, app_package=app_package)
+        hash_result = hash_search(data, app_packages=[app_package] if app_package else None, own_package=app_package)
         stage1_ms = (time.perf_counter() - t0) * 1000
 
         if hash_result:
@@ -201,7 +201,7 @@ def cmd_test(images: list[Path], app_package: str) -> None:
         clip_ms = (time.perf_counter() - t0) * 1000
 
         t0 = time.perf_counter()
-        fast_result = fast_search(vector, app_package=app_package)
+        fast_result = fast_search(vector, app_packages=[app_package] if app_package else None, own_package=app_package)
         stage2_ms = (time.perf_counter() - t0) * 1000
 
         if fast_result:

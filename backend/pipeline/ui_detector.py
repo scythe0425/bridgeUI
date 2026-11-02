@@ -1,4 +1,5 @@
 import io
+import threading
 from pathlib import Path
 
 from PIL import Image
@@ -11,6 +12,7 @@ _CANVAS_W = 640
 _CANVAS_H = 960
 
 _model: YOLO | None = None
+_predict_lock = threading.Lock()
 
 _ELEMENT_HINTS: dict[str, str] = {
     "icon": "심볼/그림 형태의 아이콘 요소",
@@ -42,6 +44,51 @@ def warmup() -> None:
         최초 호출 시 모델 가중치를 메모리에 로드합니다. 이후 호출은 no-op입니다.
     """
     _get_model()
+
+
+def _predict(image: Image.Image, conf: float):
+    """YOLO 추론을 잠금 안에서 실행합니다.
+
+    FastAPI가 엔드포인트를 스레드풀에서 동시에 실행하므로,
+    스레드 안전이 보장되지 않는 YOLO 모델 호출을 한 번에 하나로 제한합니다.
+
+    Args:
+        image: 입력 PIL 이미지.
+        conf: 탐지 신뢰도 임계값.
+
+    Returns:
+        ultralytics 추론 결과 리스트.
+    """
+    with _predict_lock:
+        return _get_model().predict(image, verbose=False, conf=conf)
+
+
+def detect_all(image_bytes: bytes, conf: float = 0.3) -> dict:
+    """전체 스크린샷의 UI 요소를 모두 탐지해 bbox 목록만 반환합니다 (/detect 전용).
+
+    Args:
+        image_bytes: 전체 스크린샷 PNG 바이트.
+        conf: 탐지 신뢰도 임계값. 사용자에게 보여줄 후보이므로 기본 0.3.
+
+    Returns:
+        { "elements": [{"x1","y1","x2","y2","conf","type"}, ...],
+          "image_width": int, "image_height": int }
+    """
+    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    results = _predict(image, conf)
+    boxes = results[0].boxes if results else None
+
+    elements = []
+    if boxes is not None:
+        for i in range(len(boxes)):
+            x1, y1, x2, y2 = [float(v) for v in boxes.xyxy[i].tolist()]
+            elements.append({
+                "x1": int(x1), "y1": int(y1),
+                "x2": int(x2), "y2": int(y2),
+                "conf": round(float(boxes.conf[i]), 3),
+                "type": _classify_by_geometry(x1, y1, x2, y2),
+            })
+    return {"elements": elements, "image_width": image.width, "image_height": image.height}
 
 
 def _classify_by_geometry(x1: float, y1: float, x2: float, y2: float) -> str:
@@ -132,7 +179,7 @@ def detect_from_full_screenshot(
         full_image = Image.open(io.BytesIO(full_image_bytes)).convert("RGB")
 
         # YOLO 탐지 — 전체 스크린샷, 패딩 불필요, conf 0.05 (OmniParser 원본 임계값)
-        results = _get_model().predict(full_image, verbose=False, conf=0.05)
+        results = _predict(full_image, 0.05)
         all_boxes = results[0].boxes if results else None
 
         total = len(all_boxes) if all_boxes is not None else 0
@@ -282,7 +329,7 @@ def detect_ui_element(image_bytes: bytes) -> dict:
         crop = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         canvas, offset_x, offset_y = _pad_to_canvas(crop)
 
-        results = _get_model().predict(canvas, verbose=False, conf=0.1)
+        results = _predict(canvas, 0.1)
         all_boxes = results[0].boxes if results else None
 
         print(
