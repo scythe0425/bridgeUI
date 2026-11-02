@@ -87,8 +87,8 @@ def search(
         own_package: 현재 캡처 앱 패키지명. 크로스앱 임계값 적용 기준.
 
     Returns:
-        캐시 히트 시 { "description", "element_type", "hamming", "cross_app" },
-        미스 시 None.
+        캐시 히트 시 { "id", "description", "element_type", "hamming", "cross_app" },
+        미스 시 None. "id"는 매칭된 ChromaDB 문서 ID입니다.
     """
     if not _store:
         return None
@@ -108,6 +108,7 @@ def search(
         if dist <= threshold and dist < best_dist and desc:
             best_dist = dist
             best = {
+                "id": elem_id,
                 "description": desc,
                 "element_type": el_type,
                 "hamming": dist,
