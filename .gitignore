@@ -20,7 +20,7 @@
 **/backend/venv/
 **/backend/env/
 **/backend/.env
-**/backend/chroma_data/
+**/chroma_data/
 **/backend/weights/
 **/backend/db/screenshots/
 
