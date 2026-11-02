@@ -35,7 +35,7 @@
 ⑤  "UI 찾기" 버튼 탭 → /detect 결과로 크롭 내 UI에 파란 테두리 오버레이
 ⑥  사용자: 파란 테두리 UI 직접 탭
 ⑦  POST /capture (전체 스크린샷 + YOLO bbox 좌표 + 앱 정보)
-⑧  OmniParser YOLOv8 → 전체 화면 탐지 → 크롭 영역 중심에 가장 가까운 요소 선택
+⑧  OmniParser YOLOv8 → 전체 화면 탐지(conf 0.05) → 크롭 영역 중심에 가장 가까운 요소 선택
 ⑨  앱 카테고리 결정 → 지도앱 그룹끼리 Stage 1/2 캐시 공유
 ⑩  Stage 1 pHash: 해밍거리 ≤ 8(동일앱) / ≤ 4(크로스앱) → 즉시 반환 (<1ms)
 ⑪  Stage 2 CLIP: 코사인 ≥ 0.90(동일앱) / ≥ 0.95(크로스앱) → 반환 (~80ms)
@@ -63,11 +63,12 @@
 cd backend
 
 # 최초 1회: 가상환경 생성 및 의존성 설치
+# python-dotenv는 uvicorn[standard] 의존성으로 함께 설치됩니다.
 python3 -m venv venv
 venv/bin/pip install -r requirements.txt
 
-# 최초 1회: API 키 설정 (.env 파일 — gitignore 처리됨)
-echo 'GEMINI_API_KEY=AIza...' > .env
+# 최초 1회: API 키 설정 (.env 파일 — gitignore 처리됨, 아래 표 참고)
+printf 'GEMINI_API_KEY=AIza...\nANTHROPIC_API_KEY=sk-ant-...\n' > .env
 
 # 최초 1회: OmniParser 가중치 다운로드
 venv/bin/python3 -c "from huggingface_hub import hf_hub_download; \
@@ -82,6 +83,16 @@ venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
 브라우저에서 `http://localhost:8000` 접속 → 캡처 이미지·분석 결과·DB 수가 2초마다 자동 갱신됩니다.
+
+### API 키 우선순위 (`backend/.env`)
+
+| 우선순위 | 환경 변수 | 용도 |
+|:---:|-----------|------|
+| **1순위** | `GEMINI_API_KEY` | Stage 3 Deep Track (Gemini 2.5 Flash Vision) — **필수** |
+| 2순위 | `ANTHROPIC_API_KEY` | 예비 키 (Claude Vision) |
+
+> 현재 `pipeline/deep_track.py`는 `GEMINI_API_KEY`만 읽으며, `ANTHROPIC_API_KEY`로 자동 전환하는 코드는 아직 없습니다.
+> `GEMINI_API_KEY`가 없으면 서버는 뜨지만 캐시 미스 시 "정보를 찾는 중입니다"가 반환됩니다.
 
 ---
 
@@ -161,7 +172,7 @@ flutter run          # 연결된 기기에 자동 설치 및 실행
 | 메서드 | 경로 | 설명 |
 |--------|------|------|
 | `POST` | `/capture` | 전체 스크린샷 + 크롭 좌표 수신 → YOLO 탐지 → 3단계 캐시 파이프라인 → 설명 반환 |
-| `POST` | `/detect` | 전체 스크린샷 수신 → YOLO 탐지만 → bbox 목록 반환 (분석 없음) |
+| `POST` | `/detect` | 전체 스크린샷 수신 → YOLO 탐지만 (conf 0.3) → bbox 목록 반환 (분석 없음) |
 | `POST` | `/db/reanalyze` | 마지막 캡처를 Gemini로 강제 재분석 → ChromaDB 설명 덮어쓰기 |
 | `GET` | `/` | 최신 캡처 이미지 뷰어 (2초 자동 갱신, track 배지·재분석 버튼 포함) |
 | `GET` | `/db/count` | ChromaDB 저장 항목 수 확인 |
@@ -199,8 +210,12 @@ flutter run          # 연결된 기기에 자동 설치 및 실행
 | `confidence` | OmniParser 탐지 신뢰도 (0.0~1.0) |
 | `similarity` | CLIP 코사인 유사도 — fast 트랙만 존재 |
 | `hamming` | pHash 해밍 거리 — hash 트랙만 존재 |
-| `cross_app` | 다른 앱 캐시 항목에서 히트했는지 여부 |
-| `fallback` | YOLO 탐지 실패로 사용자 크롭을 그대로 사용했는지 여부 |
+| `app_name` | 요청의 `app_name`, 없으면 `app_package` |
+| `cross_app` | 다른 앱 캐시 항목에서 히트했는지 여부 (hash/fast/deep 응답만) |
+| `fallback` | YOLO 탐지 실패로 사용자 크롭을 그대로 사용했는지 여부 (hash/fast/deep 응답만) |
+
+> `track: "error"` 응답에는 `cross_app`·`fallback`이 없고, 예외로 인한 경우 `detail` 필드가 추가됩니다.
+> Flutter 앱(`CaptureResponse`)은 이 중 `track`, `description`, `element_type`, `similarity`만 사용합니다.
 
 ### `/detect` 응답
 
