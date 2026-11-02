@@ -143,7 +143,7 @@ def role_from_text(texts: list[tuple[str, float]], box: tuple | None = None,
 
 
 def role_from_neighbors(collection, embedding: list[float], app_packages: list[str],
-                        own_package: str = "") -> tuple[str | None, float, float]:
+                        own_package: str = "") -> tuple[str | None, float, bool]:
     """CLIP 최근접 이웃의 역할로 투표합니다.
 
     역할이 없는 항목(앱 고유 기능, 역할 미지정 Deep Track 항목)은 "other"로 경쟁에 참여합니다.
@@ -155,10 +155,10 @@ def role_from_neighbors(collection, embedding: list[float], app_packages: list[s
         own_package: 현재 앱 패키지. 1위 이웃이 다른 앱이면 CROSS_APP_KNN_MIN을 적용합니다.
 
     Returns:
-        (역할 또는 None, 1위 유사도, 2위 역할과의 차이).
+        (역할 또는 None, 1위 유사도, 1위 이웃이 다른 앱 항목인지).
     """
     if not app_packages:
-        return None, 0.0, 0.0
+        return None, 0.0, False
     where = ({"app_package": app_packages[0]} if len(app_packages) == 1
              else {"app_package": {"$in": app_packages}})
     result = collection.query(query_embeddings=[embedding], n_results=KNN_TOP_K,
@@ -169,14 +169,15 @@ def role_from_neighbors(collection, embedding: list[float], app_packages: list[s
         if role not in best:
             best[role] = (1.0 - dist, meta.get("app_package", ""))
     if not best:
-        return None, 0.0, 0.0
+        return None, 0.0, False
     ranked = sorted(best.items(), key=lambda item: -item[1][0])
     role, (score, package) = ranked[0]
     gap = score - (ranked[1][1][0] if len(ranked) > 1 else 0.0)
-    threshold = KNN_MIN if package == own_package else CROSS_APP_KNN_MIN
+    cross_app = package != own_package
+    threshold = CROSS_APP_KNN_MIN if cross_app else KNN_MIN
     if role == ROLE_OTHER or score < threshold or gap < ROLE_MARGIN:
-        return None, score, gap
-    return role, score, gap
+        return None, score, cross_app
+    return role, score, cross_app
 
 
 def _check_position(role: str, box: tuple | None, screen: tuple[int, int] | None) -> str:
@@ -220,14 +221,15 @@ def classify(image_bytes: bytes, embedding: list[float], collection,
         screen: 전체 스크린샷 (너비, 높이).
 
     Returns:
-        { role, description, source("text"|"neighbors"), text, score } 또는 None(판정 보류).
+        { role, description, source("text"|"neighbors"), text, score, cross_app } 또는 None(판정 보류).
+        score는 이웃 투표의 1위 유사도이며 글자로 판정하면 None입니다.
     """
     if box is not None and screen is not None and box[3] < screen[1] * STATUS_BAR:
         return None
     role, text = role_from_text(read_text(image_bytes), box, screen[1] if screen else None)
-    source, score = "text", None
+    source, score, cross_app = "text", None, False
     if role is None:
-        role, score, _gap = role_from_neighbors(collection, embedding, app_packages, own_package)
+        role, score, cross_app = role_from_neighbors(collection, embedding, app_packages, own_package)
         source = "neighbors"
         if role is None:
             return None
@@ -236,4 +238,4 @@ def classify(image_bytes: bytes, embedding: list[float], collection,
     if description is None:
         return None
     return {"role": role, "description": description, "source": source,
-            "text": text, "score": score}
+            "text": text, "score": score, "cross_app": cross_app}

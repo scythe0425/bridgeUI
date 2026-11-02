@@ -2,7 +2,7 @@ import 'dart:convert';
 
 /// 백엔드 /capture 엔드포인트의 응답 모델.
 class CaptureResponse {
-  /// "fast" | "deep" | "error"
+  /// "hash" | "fast" | "role" | "deep" | "error"
   final String track;
 
   /// 노년층 친화적 설명 텍스트.

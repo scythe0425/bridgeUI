@@ -273,20 +273,29 @@ def apply_labels(judgements: str) -> None:
 
 
 def run() -> None:
-    """현재 코드의 Stage 1/2 검색을 그대로 호출해 맞은 히트·틀린 히트·미스를 셉니다."""
+    """/capture와 같은 순서로 Stage 1 → 2 → 2.5(역할)를 호출해 맞은·틀린 응답과 미스를 셉니다.
+
+    Stage 1/2는 labels.json(설명 단위), Stage 2.5는 roles.json(역할 단위)으로 채점합니다.
+    미스는 실제 서비스에서 Gemini(Stage 3)가 호출되는 박스입니다.
+    """
+    from PIL import Image
     from db.chroma_store import get_collection
     from pipeline.embedder import embed_image
     from pipeline.fast_track import search as fast_search
     from pipeline.hash_track import load_from_collection, search as hash_search
+    from pipeline.role_classifier import classify as role_classify
 
     boxes = _load_json(BOXES_FILE, [])
     if not boxes:
         sys.exit("boxes.json이 없습니다. 먼저 build를 실행하세요.")
     labels = _load_json(LABELS_FILE, {})
-    load_from_collection(get_collection())
+    roles = _load_json(ROLES_FILE, {})
+    collection = get_collection()
+    load_from_collection(collection)
+    sizes: dict[str, tuple[int, int]] = {}
 
     def empty_stats() -> dict:
-        stats = {f"{t}_{r}": 0 for t in ("hash", "fast") for r in ("ok", "bad", "unlabeled")}
+        stats = {f"{t}_{r}": 0 for t in ("hash", "fast", "role") for r in ("ok", "bad", "unlabeled")}
         stats.update(miss=0, total=0)
         return stats
 
@@ -299,13 +308,24 @@ def run() -> None:
         crop = (CROP_DIR / b["crop"]).read_bytes()
         result = hash_search(crop, app_packages=cats, own_package=pkg)
         track = "hash"
+        vector = None
         if not result:
-            result = fast_search(embed_image(crop), app_packages=cats, own_package=pkg)
+            vector = embed_image(crop)
+            result = fast_search(vector, app_packages=cats, own_package=pkg)
             track = "fast"
-        if not result:
-            stats["miss"] += 1
-            continue
-        verdict = labels.get(b["key"], {}).get(result["description"])
+        if result:
+            verdict = labels.get(b["key"], {}).get(result["description"])
+        else:
+            if b["screenshot"] not in sizes:
+                sizes[b["screenshot"]] = Image.open(SCREENSHOT_DIR / b["screenshot"]).size
+            result = role_classify(crop, vector, collection, cats, own_package=pkg,
+                                   box=tuple(b["box"]), screen=sizes[b["screenshot"]])
+            track = "role"
+            if not result:
+                stats["miss"] += 1
+                continue
+            truth = roles.get(b["key"])
+            verdict = None if truth is None else result["role"] == truth
         if verdict is None:
             stats[f"{track}_unlabeled"] += 1
         elif verdict:
@@ -313,23 +333,26 @@ def run() -> None:
         else:
             stats[f"{track}_bad"] += 1
 
+    def pct(n: int, d: int) -> str:
+        return f"{n / d:.1%} ({n}/{d})" if d else "-"
+
     for pkg, stats in by_app.items():
         total = stats["total"]
         if not total:
             continue
-        hits_ok = stats["hash_ok"] + stats["fast_ok"]
-        hits_bad = stats["hash_bad"] + stats["fast_bad"]
-        unlabeled = stats["hash_unlabeled"] + stats["fast_unlabeled"]
+        cache_ok = stats["hash_ok"] + stats["fast_ok"]
+        cache_bad = stats["hash_bad"] + stats["fast_bad"]
+        all_ok, all_bad = cache_ok + stats["role_ok"], cache_bad + stats["role_bad"]
+        unlabeled = sum(stats[f"{t}_unlabeled"] for t in ("hash", "fast", "role"))
         print(f"[{APP_LABELS.get(pkg, pkg)}] 박스 {total}개")
-        print(f"  Stage 1 hash : 맞음 {stats['hash_ok']:3d} / 틀림 {stats['hash_bad']:3d} / 라벨없음 {stats['hash_unlabeled']}")
-        print(f"  Stage 2 fast : 맞음 {stats['fast_ok']:3d} / 틀림 {stats['fast_bad']:3d} / 라벨없음 {stats['fast_unlabeled']}")
-        print(f"  미스(Gemini) : {stats['miss']:3d}")
-        labeled_hits = hits_ok + hits_bad
-        if labeled_hits:
-            print(f"  틀린 히트 비율 : {hits_bad / labeled_hits:.1%} ({hits_bad}/{labeled_hits})")
-        print(f"  맞는 캐시 응답 비율 : {hits_ok / total:.1%}")
+        print(f"  Stage 1 hash   : 맞음 {stats['hash_ok']:3d} / 틀림 {stats['hash_bad']:3d} / 라벨없음 {stats['hash_unlabeled']}")
+        print(f"  Stage 2 fast   : 맞음 {stats['fast_ok']:3d} / 틀림 {stats['fast_bad']:3d} / 라벨없음 {stats['fast_unlabeled']}")
+        print(f"  Stage 2.5 role : 맞음 {stats['role_ok']:3d} / 틀림 {stats['role_bad']:3d} / 라벨없음 {stats['role_unlabeled']}")
+        print(f"  미스(Gemini)   : {stats['miss']:3d}  — 역할 판정 없이는 {stats['miss'] + stats['role_ok'] + stats['role_bad'] + stats['role_unlabeled']}")
+        print(f"  Stage 1/2만    : 맞는 응답 {pct(cache_ok, total)} / 틀린 응답 비율 {pct(cache_bad, cache_ok + cache_bad)}")
+        print(f"  + 역할 판정    : 맞는 응답 {pct(all_ok, total)} / 틀린 응답 비율 {pct(all_bad, all_ok + all_bad)}")
         if unlabeled:
-            print(f"  ⚠ 라벨 없는 히트 {unlabeled}개 — sheet로 라벨을 추가하세요.")
+            print(f"  ⚠ 라벨 없는 응답 {unlabeled}개 — sheet(설명)·rolesheet(역할)로 라벨을 추가하세요.")
 
 
 def role_run() -> None:

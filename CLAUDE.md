@@ -67,11 +67,14 @@ Claude는 코드 작성 전 현재 단계를 확인하고, 해당 단계 범위 
       └─ 캐시 미스 → CLIP 임베딩 생성 (512차원 벡터)
   ⑫  Stage 2 — CLIP: 카테고리 필터 코사인 ≥ 0.91(동일앱) / ≥ 0.95(크로스앱) → 반환 (~80ms, track: "fast")
       └─ Stage 1·2 모두 설명이 다른 후보와 점수가 너무 가까우면 미스 (모호성 거부)
-      └─ 캐시 미스 → Stage 3
+      └─ 캐시 미스 → Stage 2.5
+  ⑫-1 Stage 2.5 — 역할 판정: 버튼 글자(OCR 핵심어) 또는 CLIP 이웃 역할 투표 → 역할 표준 설명 (~150ms, track: "role")
+      └─ DB 저장 안 함 / 판정 보류 → Stage 3
   ⑬  Stage 3 — Gemini 2.5 Flash Vision: 전체 스크린샷 + 요소 이미지 + "{app_name} 앱 화면" 프롬프트
-      ├─ 성공 → ChromaDB 저장 (pHash·CLIP·description) + 인메모리 pHash 스토어 즉시 등록
+      ├─ JSON 구조화 출력으로 설명 + 역할(roles.py 30종 또는 other)을 함께 받음
+      ├─ 성공 → ChromaDB 저장 (pHash·CLIP·description·role) + 인메모리 pHash 스토어 즉시 등록
       └─ 3회 재시도 후 실패 → "정보를 찾는 중입니다" 반환, DB 저장 안 함
-  ⑭  최종 JSON 응답 { track, description, element_type, confidence, similarity, hamming, app_name, cross_app, fallback }
+  ⑭  최종 JSON 응답 { track, description, element_type, confidence, similarity, hamming, app_name, cross_app, fallback, role }
   ⑮  말풍선 UI 표시 (track 배지 + 설명 텍스트)
   ⑯  말풍선 닫기 → 크롭 초기화 → 다시 선택 가능 / 좌하단 X 버튼 → 오버레이 종료
 ```
@@ -427,7 +430,8 @@ def analyze(
 
 **생성 설정**
 - `system_instruction`: "70대 어르신의 스마트폰 사용을 돕는 친절한 안내원… 항상 2문장 이내"
-- `temperature=0.2`, `max_output_tokens=300`
+- `temperature=0.2`, `max_output_tokens=1024` (내부 추론 토큰 약 170개가 한도에 포함되므로 여유를 둠)
+- `response_mime_type="application/json"` + 스키마 `{description, role}` — `analyze()`는 `DeepResult(description, role)` 반환, 목록 밖 역할은 `"other"`
 - few-shot 예시 2개(홈 버튼, 검색창)로 출력 형식 고정
 - 응답 검증: 길이 < 20 또는 끝 글자가 `.`/`요`/`다`가 아니면 잘린 응답으로 보고 재시도
 - 최대 3회 시도, 실패 간 3s → 6s 대기. 모두 실패하면 `None`
@@ -482,13 +486,14 @@ app_name    : 앱 표시 이름 (예: "네이버 지도")
 ```json
 { "track": "hash", "description": "처음 화면으로 돌아가는 버튼이에요.", "element_type": "icon", "confidence": 0.72, "similarity": null, "hamming": 2, "app_name": "배달의민족", "cross_app": false, "fallback": false }
 { "track": "fast", "description": "이 버튼은 우회전 경로를 안내해요.", "element_type": "icon", "confidence": 0.84, "similarity": 0.95, "hamming": null, "app_name": "카카오맵", "cross_app": true, "fallback": false }
-{ "track": "deep", "description": "이 버튼은 메시지를 전달하는 버튼이에요.", "element_type": "button", "confidence": 0.61, "similarity": null, "hamming": null, "app_name": "카카오톡", "cross_app": false, "fallback": false }
+{ "track": "role", "description": "고른 경로로 길 안내를 시작해요. 이동하는 동안 어느 쪽으로 가야 하는지 차례로 알려줘요.", "element_type": "text", "confidence": 0.65, "similarity": null, "hamming": null, "app_name": "카카오맵", "cross_app": false, "fallback": false, "role": "start_navigation" }
+{ "track": "deep", "description": "이 버튼은 메시지를 전달하는 버튼이에요.", "element_type": "button", "confidence": 0.61, "similarity": null, "hamming": null, "app_name": "카카오톡", "cross_app": false, "fallback": false, "role": "other" }
 { "track": "error", "description": "정보를 찾는 중입니다", "element_type": null, "confidence": null, "similarity": null, "hamming": null, "app_name": "네이버 지도" }
 ```
 
 | 필드 | 설명 |
 |------|------|
-| `track` | `"hash"` / `"fast"` / `"deep"` / `"error"` |
+| `track` | `"hash"` / `"fast"` / `"role"` / `"deep"` / `"error"` |
 | `description` | 노년층 친화적 2문장 이내 설명 |
 | `element_type` | OmniParser 탐지 결과 (`"icon"` / `"button"` / `"text"` / `"unknown"`) |
 | `confidence` | OmniParser YOLOv8 탐지 신뢰도 (0.0~1.0) |
@@ -496,7 +501,8 @@ app_name    : 앱 표시 이름 (예: "네이버 지도")
 | `hamming` | pHash 해밍 거리 — hash 트랙만 존재, 나머지 null |
 | `app_name` | 요청의 `app_name`, 없으면 `app_package` |
 | `cross_app` | 같은 카테고리의 다른 앱 항목에서 히트했는지 (hash/fast/deep 응답만) |
-| `fallback` | YOLO 후보가 없어 사용자 크롭을 그대로 썼는지 (hash/fast/deep 응답만) |
+| `fallback` | YOLO 후보가 없어 사용자 크롭을 그대로 썼는지 (hash/fast/role/deep 응답만) |
+| `role` | 기능적 역할 키 (`pipeline/roles.py`) — role·deep 트랙만 값이 있고 hash·fast는 null. role 트랙의 `similarity`는 이웃 투표 1위 유사도(글자 판정이면 null) |
 
 > `error` 응답에는 `cross_app`·`fallback`이 없습니다. 예외 내용은 응답에 넣지 않고 서버 로그(`bridgeui` 로거)에만 남깁니다.
 
@@ -536,7 +542,7 @@ app_name    : 앱 표시 이름 (예: "네이버 지도")
 - 설명 폰트 22sp, 고대비 흰 배경 + 짙은 텍스트 (#202124)
 - 화면 하단 1/3 고정 표시 (`Alignment(0, 0.72)`)
 - 닫기 버튼 터치 영역 56dp
-- track 배지: hash/fast=초록 "빠른 응답" (#34A853), deep=파랑 "AI 분석" (#1A73E8), error=회색 "오류" (#9AA0A6)
+- track 배지: hash/fast=초록 "빠른 응답" (#34A853), role=보라 "기능 안내" (#8430CE), deep=파랑 "AI 분석" (#1A73E8), error=회색 "오류" (#9AA0A6)
 
 **TTS 제거 이유**: 노년층 사용성 테스트 피드백 반영 — 말풍선 텍스트 직접 읽기 방식으로 전환
 
@@ -559,7 +565,9 @@ app_name    : 앱 표시 이름 (예: "네이버 지도")
   - 글자(easyocr 핵심어) → 없으면 CLIP 이웃의 역할 투표(동일앱 ≥ 0.85 / 크로스앱 ≥ 0.92, 역할 간 차이 ≥ 0.03) → 화면 위치 보정
   - `eval_cache.py rolerun` 결과 정밀도 네이버 96%(53/55)·구글 100%(5/5)·카카오 87%(13/15), 재현율 53/111·5/29·13/32
   - CLIP 제로샷("a microphone icon" 등 문장 비교)은 정밀도가 나오지 않아 쓰지 않음
-  - 아직 `/capture`에는 연결하지 않음 (3단계)
+- (11-02) 역할 기반 매칭 3단계: `/capture`에 Stage 2.5(track `"role"`) 연결, Gemini가 역할도 반환해 저장, 말풍선 "기능 안내" 배지
+  - `eval_cache.py run`이 Stage 1 → 2 → 2.5 전체를 채점 (Stage 2.5는 roles.json 기준)
+  - 맞는 응답: 네이버 29 → 64, 구글 0 → 5, 카카오 1 → 13 / 틀린 응답 비율: 네이버 40.8% → 25.6%
 
 **예정**
 - Stage별 히트율·응답시간 실측 (JSON Lines 구조화 로그, 실기기 필요)
@@ -751,7 +759,8 @@ bridge-ui/
 
 ### Backend (FastAPI)
 - Vector DB는 **ChromaDB** 사용. 컬렉션은 `get_collection()` 싱글턴으로만 접근할 것.
-- `/capture` 엔드포인트는 항상 `track`, `description`, `element_type`, `confidence`, `similarity`, `hamming`, `app_name` 필드를 포함한 JSON을 반환할 것. 정상 응답(hash/fast/deep)에는 `cross_app`, `fallback`도 포함할 것.
+- `/capture` 엔드포인트는 항상 `track`, `description`, `element_type`, `confidence`, `similarity`, `hamming`, `app_name` 필드를 포함한 JSON을 반환할 것. 정상 응답(hash/fast/role/deep)에는 `cross_app`, `fallback`, `role`도 포함할 것.
+- Stage 2.5(역할 판정) 결과는 DB에 저장하지 말 것. 판정 중 예외가 나면 로그만 남기고 Stage 3로 넘길 것.
 - `/detect` 엔드포인트는 YOLO 탐지만 수행하고 `elements` 배열과 `image_width`, `image_height`를 반환할 것 (pHash/CLIP/Gemini 호출 없음).
 - `/capture` 수신 시 `full_image` + 유효한 `crop_x1/y1/x2/y2`가 있으면 `detect_from_full_screenshot()` 사용, 아니면 `file`로 `detect_ui_element()` 구버전 폴백 사용.
 - `detect_from_full_screenshot()`이 반환한 `element_image_bytes`를 pHash·CLIP·Gemini Vision 모두에 사용할 것 (사용자 크롭이 아님).
@@ -818,7 +827,7 @@ def analyze_ui_element(image: bytes, metadata: dict) -> dict:
 코드 생성 전 아래 항목을 확인하세요.
 
 - [ ] 현재 로드맵 단계(섹션 2)에 해당하는 범위의 구현인가?
-- [ ] 3단계 캐시 파이프라인(Stage 1 pHash → Stage 2 CLIP → Stage 3 Gemini Deep Track) 순서를 따르는가?
+- [ ] 캐시 파이프라인(Stage 1 pHash → Stage 2 CLIP → Stage 2.5 역할 → Stage 3 Gemini Deep Track) 순서를 따르는가?
 - [ ] UI 컴포넌트와 비즈니스 로직이 분리되어 있는가?
 - [ ] 모든 함수/클래스에 Docstring이 있는가?
 - [ ] 에러 및 지연 상황에 사용자 친화적 중계 메시지가 있는가?
