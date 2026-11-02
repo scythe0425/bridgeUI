@@ -14,6 +14,7 @@ seed에 쓰지 않은 실제 해상도 스크린샷에서 /detect와 같은 방�
     venv/bin/python3 tests/eval_cache.py run        # 현재 코드로 정확도 측정
     venv/bin/python3 tests/eval_cache.py rolesheet  # 역할 라벨이 없는 박스를 시트로 출력
     venv/bin/python3 tests/eval_cache.py rolelabel "0:search,1:other"   # 시트 번호별 역할 반영
+    venv/bin/python3 tests/eval_cache.py rolerun    # 역할 분류기 정밀도·재현율 측정
 
 build는 boxes.json에 아직 없는 스크린샷만 탐지하므로, 평가 화면을 추가해도 기존 박스 키와 라벨이 유지됩니다.
 
@@ -331,6 +332,54 @@ def run() -> None:
             print(f"  ⚠ 라벨 없는 히트 {unlabeled}개 — sheet로 라벨을 추가하세요.")
 
 
+def role_run() -> None:
+    """역할 분류기만 따로 돌려, roles.json 대비 앱별 정밀도·재현율을 셉니다."""
+    from PIL import Image
+    from db.chroma_store import get_collection
+    from pipeline.embedder import embed_image
+    from pipeline.role_classifier import classify
+
+    boxes = _load_json(BOXES_FILE, [])
+    roles = _load_json(ROLES_FILE, {})
+    if not roles:
+        sys.exit("roles.json이 없습니다. 먼저 rolesheet/rolelabel로 역할 라벨을 붙이세요.")
+    collection = get_collection()
+    sizes: dict[str, tuple[int, int]] = {}
+    by_app = {pkg: {"roles": 0, "ok": 0, "bad": 0, "text": 0, "neighbors": 0}
+              for pkg in dict.fromkeys(EVAL_SCREENSHOTS.values())}
+    wrong = []
+    for b in boxes:
+        truth = roles.get(b["key"])
+        if truth is None:
+            continue
+        pkg = _package(b)
+        stats = by_app[pkg]
+        if truth != "other":
+            stats["roles"] += 1
+        if b["screenshot"] not in sizes:
+            sizes[b["screenshot"]] = Image.open(SCREENSHOT_DIR / b["screenshot"]).size
+        crop = (CROP_DIR / b["crop"]).read_bytes()
+        result = classify(crop, embed_image(crop), collection, _category_packages(pkg),
+                          own_package=pkg, box=tuple(b["box"]), screen=sizes[b["screenshot"]])
+        if result is None:
+            continue
+        if result["role"] == truth:
+            stats["ok"] += 1
+            stats[result["source"]] += 1
+        else:
+            stats["bad"] += 1
+            wrong.append((b["key"], truth, result["role"], result["source"], result["text"]))
+
+    for pkg, s in by_app.items():
+        answered = s["ok"] + s["bad"]
+        precision = f"{s['ok'] / answered:.0%}" if answered else "-"
+        print(f"[{APP_LABELS.get(pkg, pkg)}] 역할 있는 박스 {s['roles']}개 — "
+              f"답함 {answered} / 맞음 {s['ok']} (글자 {s['text']}, 투표 {s['neighbors']}) / "
+              f"틀림 {s['bad']} / 정밀도 {precision} / 재현율 {s['ok']}/{s['roles']}")
+    for key, truth, pred, source, text in wrong:
+        print(f"  ✗ {key}  정답 {truth} → {pred} ({source}{': ' + text if text else ''})")
+
+
 def role_sheet() -> None:
     """역할 라벨이 없는 박스를 화면 맥락과 함께 시트 이미지로 출력합니다."""
     from PIL import Image, ImageDraw
@@ -396,7 +445,8 @@ def apply_roles(judgements: str) -> None:
 def main() -> None:
     """명령행 인자에 따라 build / sheet / label / run을 실행합니다."""
     parser = argparse.ArgumentParser(description="캐시 파이프라인 정확도 평가")
-    parser.add_argument("command", choices=["build", "sheet", "label", "run", "rolesheet", "rolelabel"])
+    parser.add_argument("command", choices=["build", "sheet", "label", "run",
+                                            "rolesheet", "rolelabel", "rolerun"])
     parser.add_argument("judgements", nargs="?", default="",
                         help='label: "번호:1|0,..." (1=맞음, 0=틀림) / rolelabel: "번호:역할,..."')
     args = parser.parse_args()
@@ -410,6 +460,8 @@ def main() -> None:
         role_sheet()
     elif args.command == "rolelabel":
         apply_roles(args.judgements)
+    elif args.command == "rolerun":
+        role_run()
     else:
         run()
 

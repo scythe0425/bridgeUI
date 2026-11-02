@@ -555,6 +555,11 @@ app_name    : 앱 표시 이름 (예: "네이버 지도")
 - (11-02) Stage 1/2 모호성 거부 + `SIMILARITY_THRESHOLD` 0.91 → 틀린 캐시 히트 131개 → 20개
 - (11-02) 어긋난 seed bbox 71개 재지정 (648px 스크린샷 3장), 잘못된 캐시 항목 정리 도구 `tools/clean_db.py`
 - (11-02) 재분석 대상 수정, 엔드포인트 스레드풀 실행, 오류 원문 비노출
+- (11-02) 역할 기반 매칭 1·2단계: 역할 분류표 `pipeline/roles.py`(30종), 평가셋에 구글·카카오 화면 4장 추가(박스 501개, 역할 라벨), 역할 분류기 `pipeline/role_classifier.py`
+  - 글자(easyocr 핵심어) → 없으면 CLIP 이웃의 역할 투표(동일앱 ≥ 0.85 / 크로스앱 ≥ 0.92, 역할 간 차이 ≥ 0.03) → 화면 위치 보정
+  - `eval_cache.py rolerun` 결과 정밀도 네이버 96%(53/55)·구글 100%(5/5)·카카오 87%(13/15), 재현율 53/111·5/29·13/32
+  - CLIP 제로샷("a microphone icon" 등 문장 비교)은 정밀도가 나오지 않아 쓰지 않음
+  - 아직 `/capture`에는 연결하지 않음 (3단계)
 
 **예정**
 - Stage별 히트율·응답시간 실측 (JSON Lines 구조화 로그, 실기기 필요)
@@ -616,6 +621,7 @@ venv/bin/python3 tests/eval_cache.py sheet      # 라벨 없는 히트가 생기
 venv/bin/python3 tests/eval_cache.py label "0:1,1:0"
 venv/bin/python3 tests/eval_cache.py rolesheet  # 역할 라벨 없는 박스를 시트로
 venv/bin/python3 tests/eval_cache.py rolelabel "0:search,1:other"
+venv/bin/python3 tests/eval_cache.py rolerun    # 역할 분류기 정밀도·재현율 (분류기 임계값을 바꾼 뒤 실행)
 
 # 잘못된 설명(중계 메시지·잘린 문장) 캐시 정리 — 서버 종료 후 실행
 venv/bin/python3 tools/clean_db.py             # 미리보기
@@ -708,7 +714,8 @@ bridge-ui/
 │   │   ├── hash_track.py                    # Stage 1: pHash 인메모리 스토어 + 크로스앱 임계값
 │   │   ├── fast_track.py                    # Stage 2: CLIP + 카테고리 $in 필터 + 크로스앱 임계값
 │   │   ├── deep_track.py                    # Stage 3: Gemini 2.5 Flash Vision 설명 생성
-│   │   └── roles.py                         # 기능적 역할 분류표 30종 + 표준 설명 (역할 기반 매칭용)
+│   │   ├── roles.py                         # 기능적 역할 분류표 30종 + 표준 설명 (역할 기반 매칭용)
+│   │   └── role_classifier.py               # 역할 판정: easyocr 핵심어 → CLIP 이웃 역할 투표 → 위치 보정
 │   ├── tests/
 │   │   ├── eval_cache.py                    # 캐시 정확도 평가 (build / sheet / label / run)
 │   │   ├── eval/                            # boxes.json·labels.json·roles.json (crops/·sheets/는 gitignore)
