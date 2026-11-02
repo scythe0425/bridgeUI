@@ -8,7 +8,7 @@
 
 - **프로젝트명**: bridgeUI (Senior UI-Guide Plugin)
 - **부제**: 디지털 기호(Icon) 장벽 해소를 위한 실시간 UI 번역 플러그인 구현 — 노년층 디지털 리터러시
-- **현재 상태**: Step 10 진행 중 — 3단계 캐시 파이프라인(pHash→CLIP→Gemini Vision) + 앱 카테고리 크로스앱 캐시 공유 + seed DB(94개) + YOLO 기반 UI 선택 오버레이 + 말풍선 UI 완성
+- **현재 상태**: Step 10 진행 중 — 3단계 캐시 파이프라인(pHash→CLIP→Gemini Vision) + 앱 카테고리 크로스앱 캐시 공유 + seed DB(5개 앱 142개) + YOLO 기반 UI 선택 오버레이 + 말풍선 UI 완성
 - **목적**: 지도 앱 등 복잡한 UI를 가진 앱에서 노년층 사용자가 특정 아이콘이나 버튼의 기능을 직관적으로 이해할 수 있도록 돕는 보조 도구.
 - **핵심 가치**:
   - **접근성**: 시각적 하이라이트 + 말풍선 설명 제공. (TTS 제거됨)
@@ -33,7 +33,7 @@ Claude는 코드 작성 전 현재 단계를 확인하고, 해당 단계 범위 
 | 5 | ImageCapture API 연동 및 데이터 추출·전송 | | ● | | | ✅ 완료 |
 | 5-1 | 전체 화면 기반 UI/아이콘 요소 탐지 (OmniParser YOLOv8 Phase 3) | | | ● | | ✅ 완료 |
 | 6 | Vector DB (ChromaDB) 환경 구축 + CLIP 임베딩 저장 | | | ● | | ✅ 완료 |
-| 6-1 | ChromaDB 사전 구축 — 3개 앱 94개 UI 요소 seed (다중 스크린샷) | | | ● | | ✅ 완료 |
+| 6-1 | ChromaDB 사전 구축 — 3개 앱 94개 UI 요소 seed (11-02 구글·카카오 48개 추가 → 142개) (다중 스크린샷) | | | ● | | ✅ 완료 |
 | 7 | 3단계 캐시 파이프라인 구현 (pHash → CLIP → Deep Track) | | | ● | | ✅ 완료 |
 | 8 | Deep Track (Gemini 2.5 Flash Vision) 추론 엔진 연동 | | | ● | | ✅ 완료 |
 | 9 | 가이드 UI (말풍선) 시스템 통합 (TTS 제거) | | | | ● | ✅ 완료 |
@@ -238,17 +238,21 @@ ChromaDB collection: ui_elements   (경로: backend/chroma_data/)
 
 ### ✅ 6-1단계 — ChromaDB 사전 구축 (seed_db) (완료)
 
-**목표**: 서비스 시작 전 주요 3개 앱의 UI 요소를 미리 DB에 저장하여, 첫 쿼리부터 캐시 히트를 경험할 수 있도록 함.
+**목표**: 서비스 시작 전 주요 5개 앱의 UI 요소를 미리 DB에 저장하여, 첫 쿼리부터 캐시 히트를 경험할 수 있도록 함.
 
 **구현 파일**: `backend/db/seed_db.py` ✅
 
-**사전 구축 대상 (총 94개 UI 요소)**
+**사전 구축 대상 (총 142개 UI 요소, 그중 95개에 기능적 역할 지정)**
 
 | 앱 | 패키지 | 요소 수 | 주요 포함 항목 |
 |----|--------|---------|---------------|
 | 배달의민족 | `com.baemin.android` | 33개 | 헤더 아이콘 4종, 검색창, 탭 5종, 음식카테고리 10종, 편의점 5종, 하단 탭바 5종 등 |
 | 네이버지도 | `com.nhn.android.nmap` | 40개 | 홈(17) + 길찾기 입력(6) + 교통수단 탭(4) + 안내시작(2) + 장소상세 GS25(7) + 장소상세 경희대(4) |
 | 코레일 | `mobi.korail.Talk` | 21개 | 헤더 아이콘 3종, 승차권 입력 전체, 서비스 아이콘 4종, 하단 탭바 4종 등 |
+| 구글 지도 | `com.google.android.apps.maps` | 23개 | 홈(12: 검색·마이크·프로필·칩 4·레이어·길찾기·하단 탭 3) + 장소상세 경희대(11) — 2026-11-02 추가 |
+| 카카오맵 | `net.daum.android.map` | 25개 | 홈(16: 검색·마이크·길찾기·칩 3·로드뷰·레이어·현위치·바로가기·하단 탭 3) + 검색 결과(9) — 2026-11-02 추가 |
+
+구글·카카오 seed의 bbox는 `/detect`(conf 0.3) 탐지 박스를 그대로 썼습니다. 두 앱의 길찾기·검색 화면은 평가 전용이라 seed에 쓰지 않습니다.
 
 **seed_db.py 핵심 구조**
 
@@ -568,6 +572,10 @@ app_name    : 앱 표시 이름 (예: "네이버 지도")
 - (11-02) 역할 기반 매칭 3단계: `/capture`에 Stage 2.5(track `"role"`) 연결, Gemini가 역할도 반환해 저장, 말풍선 "기능 안내" 배지
   - `eval_cache.py run`이 Stage 1 → 2 → 2.5 전체를 채점 (Stage 2.5는 roles.json 기준)
   - 맞는 응답: 네이버 29 → 64, 구글 0 → 5, 카카오 1 → 13 / 틀린 응답 비율: 네이버 40.8% → 25.6%
+- (11-02) 역할 기반 매칭 4단계: 구글 지도 23개·카카오맵 25개 seed 추가 (총 142개, 역할 지정 95개)
+  - 맞는 응답: 네이버 67, 구글 9, 카카오 13 / 틀린 응답 비율: 네이버 20.2%, 구글 25.0%, 카카오 35.0%
+  - 역할 분류기 재현율: 네이버 61/111, 구글 10/29, 카카오 14/32
+  - 한계: 기록 삭제용 작은 X가 다른 앱의 닫기 X와 CLIP 0.97 이상으로 같아 "닫기"로 판정됨 (그림이 같고 뜻은 맥락에 따라 다름)
 
 **예정**
 - Stage별 히트율·응답시간 실측 (JSON Lines 구조화 로그, 실기기 필요)
@@ -616,11 +624,11 @@ printf 'GEMINI_API_KEY=AIza...\nANTHROPIC_API_KEY=sk-ant-...\n' > .env
 
 # 최초 1회: ChromaDB 사전 구축 (스크린샷을 db/screenshots/ 에 배치 후 실행)
 venv/bin/python3 db/seed_db.py --dry_run   # 목록 미리 확인 (저장 없음)
-venv/bin/python3 db/seed_db.py             # 94개 요소 CLIP 임베딩 + pHash 저장
+venv/bin/python3 db/seed_db.py             # 142개 요소 CLIP 임베딩 + pHash 저장
 
 # 서버 실행 (가상환경 직접 경로 사용 — PATH 문제 우회)
 venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
-curl http://localhost:8000/db/count        # 94 이상이면 정상 (Deep Track 저장분 포함)
+curl http://localhost:8000/db/count        # 142 이상이면 정상 (Deep Track 저장분 포함)
 
 # 캐시 정확도 평가 (임계값·마진·seed를 바꾼 뒤 반드시 실행)
 venv/bin/python3 tests/eval_cache.py build      # 최초 1회: 평가 박스 크롭 생성
@@ -679,7 +687,7 @@ Android 설정 → 앱 → 특별한 앱 접근 권한 → 사용 정보 접근 
 | 앱 context | Android `UsageStatsManager` (직전 포그라운드 앱 패키지명 수집) ✅ |
 | 크로스앱 캐시 | `_APP_CATEGORIES` 4개 그룹 + 이중 임계값 ✅ |
 | Stage 1 캐시 | pHash (`imagehash>=4.3.0`) — 인메모리 스토어, 해밍 ≤ 8 / ≤ 4, <1ms ✅ |
-| DB 사전 구축 | `seed_db.py` — 3개 앱 94개 UI 요소 (다중 스크린샷, YOLO 크롭) ✅ |
+| DB 사전 구축 | `seed_db.py` — 5개 앱 142개 UI 요소 (다중 스크린샷, YOLO 크롭, 역할 라벨) ✅ |
 | 환경 변수 | `python-dotenv` — `backend/.env` 자동 로드 (1순위 `GEMINI_API_KEY`, 2순위 `ANTHROPIC_API_KEY`) ✅ |
 | 캡처 | Android MediaProjection API + ServiceConnection (Android 16 대응) ✅ |
 | 탐지 시각화 | `tools/visualize_detections.py` — YOLO bbox 시각화 및 seed bbox 탐색 ✅ |
@@ -714,7 +722,7 @@ bridge-ui/
 ├── backend/
 │   ├── db/
 │   │   ├── chroma_store.py                  # ChromaDB 싱글턴 (경로: backend/chroma_data/)
-│   │   ├── seed_db.py                       # 3개 앱 94개 UI 요소 사전 구축 (다중 스크린샷)
+│   │   ├── seed_db.py                       # 5개 앱 142개 UI 요소 사전 구축 (다중 스크린샷, 역할 라벨)
 │   │   └── screenshots/                     # seed용 스크린샷 (gitignore)
 │   ├── pipeline/
 │   │   ├── embedder.py                      # CLIP 임베딩 (512차원, warmup 포함)

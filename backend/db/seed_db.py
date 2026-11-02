@@ -1053,6 +1053,543 @@ KORAIL_ELEMENTS: list[UIElement] = [
 ]
 
 # ─────────────────────────────────────────────
+# 4. 구글 지도 UI 요소 정의
+#    bbox는 /detect(conf 0.3) 탐지 박스 그대로 — 조회 시 크롭과 일치시키기 위함
+#    길찾기·검색 화면(google_map_directions/search.png)은 평가 전용이라 쓰지 않음
+# ─────────────────────────────────────────────
+GOOGLE_MAP_ELEMENTS: list[UIElement] = [
+
+    # ── 홈 화면 상단 ────────────────────────────
+    UIElement(
+        "gmap_search",
+        "구글 지도",
+        (25, 123, 876, 280),
+        "button",
+        "여기서 검색 창",
+        "가고 싶은 장소나 주소를 입력해서 찾을 수 있어요. "
+        "누르면 글자를 입력하는 화면이 나와요.",
+        role="search",
+    ),
+    UIElement(
+        "gmap_voice",
+        "구글 지도",
+        (776, 147, 870, 254),
+        "icon",
+        "마이크 아이콘",
+        "말로 장소를 검색할 수 있는 버튼이에요. "
+        "누른 뒤 가고 싶은 곳을 말하면 찾아줘요.",
+        role="voice_search",
+    ),
+    UIElement(
+        "gmap_profile",
+        "구글 지도",
+        (904, 144, 1013, 255),
+        "icon",
+        "프로필 원형 아이콘",
+        "내 구글 계정 정보와 설정을 볼 수 있어요. "
+        "로그인 상태도 여기서 확인해요.",
+        role="profile",
+    ),
+
+    # ── 카테고리 칩 ─────────────────────────────
+    UIElement(
+        "gmap_chip_home",
+        "구글 지도",
+        (38, 305, 125, 414),
+        "icon",
+        "집 칩 아이콘",
+        "미리 저장해 둔 집 주소로 바로 길을 찾아요. "
+        "집에 돌아갈 때 눌러요.",
+        role="home_shortcut",
+    ),
+    UIElement(
+        "gmap_chip_restaurant",
+        "구글 지도",
+        (228, 298, 492, 426),
+        "button",
+        "음식점 칩",
+        "주변 음식점을 지도에 표시해요. "
+        "가까운 식당을 찾을 때 눌러요.",
+        role="category",
+    ),
+    UIElement(
+        "gmap_chip_shopping",
+        "구글 지도",
+        (493, 299, 720, 424),
+        "button",
+        "쇼핑 칩",
+        "주변 가게와 쇼핑할 곳을 지도에 표시해요. "
+        "물건을 사러 갈 곳을 찾을 때 눌러요.",
+        role="category",
+    ),
+    UIElement(
+        "gmap_chip_gas",
+        "구글 지도",
+        (731, 298, 959, 420),
+        "button",
+        "주유소 칩",
+        "주변 주유소를 지도에 표시해요. "
+        "기름을 넣을 곳을 찾을 때 눌러요.",
+        role="category",
+    ),
+
+    # ── 지도 위 버튼 ────────────────────────────
+    UIElement(
+        "gmap_layer",
+        "구글 지도",
+        (911, 461, 1043, 593),
+        "icon",
+        "레이어 아이콘",
+        "지도 보는 방식을 바꿀 수 있어요. "
+        "위성사진이나 교통 상황 등을 켜고 끌 수 있어요.",
+        role="map_layer",
+    ),
+    UIElement(
+        "gmap_directions",
+        "구글 지도",
+        (882, 1398, 1038, 1552),
+        "icon",
+        "청록 마름모 길찾기 버튼",
+        "목적지까지 가는 길을 찾아주는 버튼이에요. "
+        "누르면 출발지와 도착지를 정하는 화면이 나와요.",
+        role="directions",
+    ),
+
+    # ── 하단 탭바 ──────────────────────────────
+    UIElement(
+        "gmap_nav_explore",
+        "구글 지도",
+        (0, 2107, 353, 2340),
+        "tab",
+        "탐색 탭",
+        "지도와 주변 추천 장소가 나오는 처음 화면이에요. "
+        "다른 화면에 있다가 지도로 돌아올 때 눌러요.",
+        role="nav_home",
+    ),
+    UIElement(
+        "gmap_nav_mypage",
+        "구글 지도",
+        (347, 2104, 735, 2335),
+        "tab",
+        "내 페이지 탭",
+        "내가 저장한 장소와 목록을 모아서 볼 수 있어요. "
+        "자주 가는 곳을 빠르게 찾을 때 눌러요.",
+        role="nav_saved",
+    ),
+    UIElement(
+        "gmap_nav_contribute",
+        "구글 지도",
+        (733, 2103, 1080, 2339),
+        "tab",
+        "참여 탭",
+        "다녀온 장소의 후기나 사진을 올릴 수 있는 화면이에요. "
+        "장소 정보를 다른 사람과 나눌 때 써요.",
+    ),
+
+    # ══════════════════════════════════════════════════════
+    # 장소 상세 — google_map_detail.png (경희대 국제캠퍼스)
+    # ══════════════════════════════════════════════════════
+    UIElement(
+        "gmap_detail_searchbar",
+        "구글 지도",
+        (55, 123, 1028, 280),
+        "text",
+        "장소 이름이 적힌 검색창",
+        "지금 찾아본 장소 이름이 적힌 검색창이에요. "
+        "누르면 다른 장소를 새로 검색할 수 있어요.",
+        "google_map_detail.png",
+        role="search",
+    ),
+    UIElement(
+        "gmap_detail_clear",
+        "구글 지도",
+        (931, 157, 1016, 247),
+        "icon",
+        "검색창 X 버튼",
+        "검색한 내용을 지우고 장소 정보를 닫아요. "
+        "다른 곳을 찾고 싶을 때 눌러요.",
+        "google_map_detail.png",
+        role="close",
+    ),
+    UIElement(
+        "gmap_detail_similar",
+        "구글 지도",
+        (374, 301, 703, 411),
+        "button",
+        "비슷한 장소 보기 버튼",
+        "지금 장소와 비슷한 곳들을 지도에 보여줘요. "
+        "다른 선택지를 찾을 때 눌러요.",
+        "google_map_detail.png",
+    ),
+    UIElement(
+        "gmap_detail_streetview",
+        "구글 지도",
+        (41, 937, 382, 1163),
+        "button",
+        "스트리트 뷰 사진",
+        "실제 거리를 찍은 사진으로 이 장소 주변을 볼 수 있어요. "
+        "가기 전에 어떻게 생겼는지 확인할 때 눌러요.",
+        "google_map_detail.png",
+        role="street_view",
+    ),
+    UIElement(
+        "gmap_detail_save",
+        "구글 지도",
+        (630, 1254, 738, 1358),
+        "icon",
+        "저장 책갈피 아이콘",
+        "이 장소를 내 저장 목록에 담아 둬요. "
+        "다음에 다시 찾기 쉬워요.",
+        "google_map_detail.png",
+        role="save",
+    ),
+    UIElement(
+        "gmap_detail_share",
+        "구글 지도",
+        (774, 1254, 880, 1358),
+        "icon",
+        "공유 아이콘",
+        "이 장소 정보를 가족이나 지인에게 보낼 수 있어요. "
+        "만날 곳을 알려줄 때 사용해요.",
+        "google_map_detail.png",
+        role="share",
+    ),
+    UIElement(
+        "gmap_detail_close",
+        "구글 지도",
+        (919, 1254, 1025, 1357),
+        "icon",
+        "장소 정보 닫기 X",
+        "장소 정보 창을 닫아요. "
+        "누르면 지도 화면으로 돌아가요.",
+        "google_map_detail.png",
+        role="close",
+    ),
+    UIElement(
+        "gmap_detail_route",
+        "구글 지도",
+        (56, 1623, 291, 1750),
+        "button",
+        "경로 버튼",
+        "이 장소까지 가는 길을 찾아줘요. "
+        "누르면 출발지와 이동 방법을 고르는 화면이 나와요.",
+        "google_map_detail.png",
+        role="directions",
+    ),
+    UIElement(
+        "gmap_detail_start",
+        "구글 지도",
+        (310, 1623, 544, 1752),
+        "button",
+        "시작 버튼",
+        "이 장소까지 바로 길 안내를 시작해요. "
+        "가는 동안 어느 쪽으로 가야 하는지 알려줘요.",
+        "google_map_detail.png",
+        role="start_navigation",
+    ),
+    UIElement(
+        "gmap_detail_call",
+        "구글 지도",
+        (559, 1623, 795, 1753),
+        "button",
+        "통화 버튼",
+        "이 장소에 바로 전화를 걸 수 있어요. "
+        "영업시간이나 예약을 물어볼 때 눌러요.",
+        "google_map_detail.png",
+        role="call",
+    ),
+    UIElement(
+        "gmap_detail_directory",
+        "구글 지도",
+        (811, 1623, 1080, 1754),
+        "button",
+        "디렉터리 버튼",
+        "이 장소 안에 있는 건물이나 가게 목록을 볼 수 있어요. "
+        "큰 학교나 건물에서 원하는 곳을 찾을 때 써요.",
+        "google_map_detail.png",
+    ),
+]
+
+# ─────────────────────────────────────────────
+# 5. 카카오맵 UI 요소 정의
+#    bbox는 /detect(conf 0.3) 탐지 박스 그대로
+#    길찾기·검색 화면(kakao_map_directions/search.png)은 평가 전용이라 쓰지 않음
+# ─────────────────────────────────────────────
+KAKAO_MAP_ELEMENTS: list[UIElement] = [
+
+    # ── 홈 화면 상단 ────────────────────────────
+    UIElement(
+        "kmap_search_icon",
+        "카카오맵",
+        (71, 137, 168, 253),
+        "icon",
+        "검색 돋보기 아이콘",
+        "가고 싶은 장소나 주소를 입력해서 찾을 수 있어요. "
+        "누르면 글자를 입력하는 화면이 나와요.",
+        role="search",
+    ),
+    UIElement(
+        "kmap_search",
+        "카카오맵",
+        (168, 144, 591, 232),
+        "text",
+        "검색창 (현재 동네 이름)",
+        "가고 싶은 장소나 주소를 입력해서 찾을 수 있어요. "
+        "지금 보이는 동네 이름이 적혀 있고, 누르면 검색 화면이 나와요.",
+        role="search",
+    ),
+    UIElement(
+        "kmap_voice",
+        "카카오맵",
+        (627, 134, 729, 244),
+        "icon",
+        "마이크 아이콘",
+        "말로 장소를 검색할 수 있는 버튼이에요. "
+        "누른 뒤 가고 싶은 곳을 말하면 찾아줘요.",
+        role="voice_search",
+    ),
+    UIElement(
+        "kmap_directions",
+        "카카오맵",
+        (885, 119, 1045, 269),
+        "button",
+        "파란 길찾기 버튼",
+        "목적지까지 가는 길을 찾아주는 버튼이에요. "
+        "누르면 출발지와 도착지를 정하는 화면이 나와요.",
+        role="directions",
+    ),
+
+    # ── 카테고리 칩 ─────────────────────────────
+    UIElement(
+        "kmap_chip_friend",
+        "카카오맵",
+        (47, 289, 316, 398),
+        "button",
+        "친구위치 칩",
+        "친구와 서로 위치를 나눠 볼 수 있어요. "
+        "만날 때 친구가 어디쯤 있는지 확인할 때 써요.",
+    ),
+    UIElement(
+        "kmap_chip_restaurant",
+        "카카오맵",
+        (594, 291, 830, 397),
+        "button",
+        "음식점 칩",
+        "주변 음식점을 지도에 표시해요. "
+        "가까운 식당을 찾을 때 눌러요.",
+        role="category",
+    ),
+    UIElement(
+        "kmap_chip_cafe",
+        "카카오맵",
+        (833, 285, 1037, 396),
+        "button",
+        "카페 칩",
+        "주변 카페를 지도에 표시해요. "
+        "가까운 커피숍을 찾을 때 눌러요.",
+        role="category",
+    ),
+
+    # ── 지도 위 버튼 ────────────────────────────
+    UIElement(
+        "kmap_roadview",
+        "카카오맵",
+        (908, 425, 1039, 556),
+        "icon",
+        "로드뷰 아이콘",
+        "실제 거리를 찍은 사진으로 주변 모습을 볼 수 있어요. "
+        "가려는 곳이 어떻게 생겼는지 미리 확인할 때 눌러요.",
+        role="street_view",
+    ),
+    UIElement(
+        "kmap_layer",
+        "카카오맵",
+        (905, 569, 1038, 697),
+        "icon",
+        "지도 레이어 아이콘",
+        "지도 보는 방식을 바꿀 수 있어요. "
+        "위성사진이나 교통 정보 등을 켜고 끌 수 있어요.",
+        role="map_layer",
+    ),
+    UIElement(
+        "kmap_cur_location",
+        "카카오맵",
+        (893, 1072, 1044, 1222),
+        "icon",
+        "현위치 버튼",
+        "지금 내가 있는 위치로 지도를 이동해요. "
+        "누르면 현재 위치가 화면 가운데에 나와요.",
+        role="current_location",
+    ),
+
+    # ── 하단 시트 바로가기 ──────────────────────
+    UIElement(
+        "kmap_profile",
+        "카카오맵",
+        (43, 1313, 136, 1406),
+        "icon",
+        "프로필 아이콘",
+        "내 카카오 계정 정보와 설정을 볼 수 있어요. "
+        "로그인 상태와 저장한 장소도 여기서 확인해요.",
+        role="profile",
+    ),
+    UIElement(
+        "kmap_shortcut_school",
+        "카카오맵",
+        (636, 1324, 720, 1387),
+        "icon",
+        "학교 바로가기",
+        "미리 저장해 둔 학교로 바로 길을 찾아요. "
+        "학교에 갈 때 눌러요.",
+    ),
+    UIElement(
+        "kmap_shortcut_home",
+        "카카오맵",
+        (783, 1329, 839, 1383),
+        "icon",
+        "집 바로가기",
+        "미리 저장해 둔 집 주소로 바로 길을 찾아요. "
+        "집에 돌아갈 때 눌러요.",
+        role="home_shortcut",
+    ),
+
+    # ── 하단 탭바 ──────────────────────────────
+    UIElement(
+        "kmap_nav_home",
+        "카카오맵",
+        (125, 2077, 324, 2293),
+        "tab",
+        "홈 탭",
+        "카카오맵의 처음 화면으로 돌아가요. "
+        "지도와 내 바로가기가 나와요.",
+        role="nav_home",
+    ),
+    UIElement(
+        "kmap_nav_transit",
+        "카카오맵",
+        (331, 2119, 433, 2209),
+        "tab",
+        "버스 모양 교통 탭",
+        "버스와 지하철 정보를 볼 수 있는 화면이에요. "
+        "정류장 도착 시간이나 노선을 찾을 때 눌러요.",
+        role="mode_transit",
+    ),
+    UIElement(
+        "kmap_nav_saved",
+        "카카오맵",
+        (642, 2115, 746, 2217),
+        "tab",
+        "책갈피 즐겨찾기 탭",
+        "내가 저장해 둔 장소를 모아서 볼 수 있어요. "
+        "자주 가는 곳을 빠르게 찾을 때 눌러요.",
+        role="nav_saved",
+    ),
+
+    # ══════════════════════════════════════════════════════
+    # 검색 결과 목록 — kakao_map_detail.png (경희대 국제캠퍼스 검색)
+    # ══════════════════════════════════════════════════════
+    UIElement(
+        "kmap_detail_voice",
+        "카카오맵",
+        (796, 127, 892, 263),
+        "icon",
+        "검색창 마이크",
+        "말로 장소를 검색할 수 있는 버튼이에요. "
+        "누른 뒤 가고 싶은 곳을 말하면 찾아줘요.",
+        "kakao_map_detail.png",
+        role="voice_search",
+    ),
+    UIElement(
+        "kmap_detail_clear",
+        "카카오맵",
+        (907, 142, 1014, 247),
+        "icon",
+        "검색어 지우기 X",
+        "검색한 글자를 지우고 검색을 닫아요. "
+        "다른 곳을 찾고 싶을 때 눌러요.",
+        "kakao_map_detail.png",
+        role="close",
+    ),
+    UIElement(
+        "kmap_detail_sort",
+        "카카오맵",
+        (42, 1075, 245, 1185),
+        "button",
+        "정렬 버튼",
+        "검색 결과를 보여주는 순서를 바꿔요. "
+        "가까운 순이나 정확한 순으로 볼 때 눌러요.",
+        "kakao_map_detail.png",
+        role="filter",
+    ),
+    UIElement(
+        "kmap_detail_cur_location",
+        "카카오맵",
+        (904, 848, 1047, 998),
+        "icon",
+        "현위치 버튼",
+        "지금 내가 있는 위치로 지도를 이동해요. "
+        "누르면 현재 위치가 화면 가운데에 나와요.",
+        "kakao_map_detail.png",
+        role="current_location",
+    ),
+    UIElement(
+        "kmap_detail_save",
+        "카카오맵",
+        (42, 1538, 149, 1642),
+        "icon",
+        "책갈피 저장 아이콘",
+        "이 장소를 내 즐겨찾기에 저장해요. "
+        "다음에 다시 찾기 쉬워요.",
+        "kakao_map_detail.png",
+        role="save",
+    ),
+    UIElement(
+        "kmap_detail_share",
+        "카카오맵",
+        (162, 1537, 268, 1641),
+        "icon",
+        "공유 화살표 아이콘",
+        "이 장소 정보를 가족이나 지인에게 보낼 수 있어요. "
+        "카카오톡으로 만날 곳을 알려줄 때 사용해요.",
+        "kakao_map_detail.png",
+        role="share",
+    ),
+    UIElement(
+        "kmap_detail_call",
+        "카카오맵",
+        (282, 1537, 389, 1640),
+        "icon",
+        "전화 아이콘",
+        "이 장소에 바로 전화를 걸 수 있어요. "
+        "영업시간이나 예약을 물어볼 때 눌러요.",
+        "kakao_map_detail.png",
+        role="call",
+    ),
+    UIElement(
+        "kmap_detail_roadview",
+        "카카오맵",
+        (402, 1537, 509, 1640),
+        "icon",
+        "로드뷰 아이콘",
+        "이 장소 주변을 실제 거리 사진으로 볼 수 있어요. "
+        "가기 전에 어떻게 생겼는지 확인할 때 눌러요.",
+        "kakao_map_detail.png",
+        role="street_view",
+    ),
+    UIElement(
+        "kmap_detail_directions",
+        "카카오맵",
+        (524, 1538, 628, 1640),
+        "icon",
+        "길찾기 화살표 아이콘",
+        "이 장소까지 가는 길을 찾아줘요. "
+        "누르면 출발지와 이동 방법을 고르는 화면이 나와요.",
+        "kakao_map_detail.png",
+        role="directions",
+    ),
+]
+
+# ─────────────────────────────────────────────
 # 앱 → (스크린샷 파일명, 패키지명, 요소 목록) 매핑
 # 패키지명은 adb shell pm list packages | grep -i <앱> 으로 확인 가능
 # ─────────────────────────────────────────────
@@ -1078,6 +1615,22 @@ APP_CONFIG: dict[str, tuple[list[str], str, list[UIElement]]] = {
         ["korail.png"],
         "mobi.korail.Talk",
         KORAIL_ELEMENTS,
+    ),
+    "google_map": (
+        [
+            "google_map.png",          # 홈 화면
+            "google_map_detail.png",   # 장소 상세 (경희대 국제캠퍼스)
+        ],
+        "com.google.android.apps.maps",
+        GOOGLE_MAP_ELEMENTS,
+    ),
+    "kakao_map": (
+        [
+            "kakao_map.png",           # 홈 화면
+            "kakao_map_detail.png",    # 검색 결과 목록 (경희대 국제캠퍼스)
+        ],
+        "net.daum.android.map",
+        KAKAO_MAP_ELEMENTS,
     ),
 }
 

@@ -48,6 +48,8 @@ SAMPLE_ELEMENTS = {
     "baemin":    ["baemin_nav_home", "baemin_search",    "baemin_cat_chicken"],
     "naver_map": ["navermap_directions", "navermap_chip_restaurant", "navermap_nav_navi"],
     "korail":    ["korail_search_train", "korail_nav_home", "korail_swap_stations"],
+    "google_map": ["gmap_directions", "gmap_chip_restaurant", "gmap_nav_explore"],
+    "kakao_map":  ["kmap_directions", "kmap_chip_cafe", "kmap_cur_location"],
 }
 
 COLORS = {
@@ -82,7 +84,7 @@ def resolve_screenshot(filename: str) -> Path | None:
 
 
 def check_screenshots() -> bool:
-    """스크린샷 3장이 모두 있는지 확인합니다."""
+    """앱별 기본 스크린샷이 모두 있는지 확인합니다."""
     ok = True
     for app_key, (filenames, _, _) in APP_CONFIG.items():
         path = resolve_screenshot(filenames[0])
@@ -106,13 +108,7 @@ def run_cache_test(
     전체 스크린샷을 detect_from_full_screenshot()에 전달하여 YOLO 탐지 후
     크롭 영역 내 최적 요소를 선택하고 pHash·CLIP으로 캐시 히트 여부를 확인합니다.
     """
-    from db.seed_db import BAEMIN_ELEMENTS, NAVER_MAP_ELEMENTS, KORAIL_ELEMENTS
-    all_elements = {
-        "baemin":    BAEMIN_ELEMENTS,
-        "naver_map": NAVER_MAP_ELEMENTS,
-        "korail":    KORAIL_ELEMENTS,
-    }
-    elem_map = {e.element_id: e for e in all_elements[app_key]}
+    elem_map = {e.element_id: e for e in APP_CONFIG[app_key][2]}
 
     img = Image.open(screenshot_path).convert("RGB")
     src_w, src_h = img.size
