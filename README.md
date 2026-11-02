@@ -38,7 +38,8 @@
 ⑧  OmniParser YOLOv8 → 전체 화면 탐지(conf 0.05) → 크롭 영역 중심에 가장 가까운 요소 선택
 ⑨  앱 카테고리 결정 → 지도앱 그룹끼리 Stage 1/2 캐시 공유
 ⑩  Stage 1 pHash: 해밍거리 ≤ 8(동일앱) / ≤ 4(크로스앱) → 즉시 반환 (<1ms)
-⑪  Stage 2 CLIP: 코사인 ≥ 0.90(동일앱) / ≥ 0.95(크로스앱) → 반환 (~80ms)
+⑪  Stage 2 CLIP: 코사인 ≥ 0.91(동일앱) / ≥ 0.95(크로스앱) → 반환 (~80ms)
+    └─ Stage 1·2 모두 설명이 다른 후보와 점수가 너무 가까우면 미스 (모호성 거부)
 ⑫  Stage 3 Gemini 2.5 Flash Vision: 신규 설명 생성 + ChromaDB 자동 캐싱
 ⑬  최종 결과 JSON 반환 { track, description, element_type, cross_app, fallback, ... }
 ⑭  말풍선 UI 표시 (track 배지 + 설명 텍스트)
@@ -173,7 +174,7 @@ flutter run          # 연결된 기기에 자동 설치 및 실행
 |--------|------|------|
 | `POST` | `/capture` | 전체 스크린샷 + 크롭 좌표 수신 → YOLO 탐지 → 3단계 캐시 파이프라인 → 설명 반환 |
 | `POST` | `/detect` | 전체 스크린샷 수신 → YOLO 탐지만 (conf 0.3) → bbox 목록 반환 (분석 없음) |
-| `POST` | `/db/reanalyze` | 마지막 캡처를 Gemini로 강제 재분석 → ChromaDB 설명 덮어쓰기 |
+| `POST` | `/db/reanalyze` | 마지막 캡처를 Gemini로 강제 재분석 → 같은 이미지 문서는 덮어쓰고, 아니면 새 문서 추가 |
 | `GET` | `/` | 최신 캡처 이미지 뷰어 (2초 자동 갱신, track 배지·재분석 버튼 포함) |
 | `GET` | `/db/count` | ChromaDB 저장 항목 수 확인 |
 
@@ -214,7 +215,7 @@ flutter run          # 연결된 기기에 자동 설치 및 실행
 | `cross_app` | 다른 앱 캐시 항목에서 히트했는지 여부 (hash/fast/deep 응답만) |
 | `fallback` | YOLO 탐지 실패로 사용자 크롭을 그대로 사용했는지 여부 (hash/fast/deep 응답만) |
 
-> `track: "error"` 응답에는 `cross_app`·`fallback`이 없고, 예외로 인한 경우 `detail` 필드가 추가됩니다.
+> `track: "error"` 응답에는 `cross_app`·`fallback`이 없습니다. 예외 내용은 응답에 넣지 않고 서버 로그에만 남깁니다.
 > Flutter 앱(`CaptureResponse`)은 이 중 `track`, `description`, `element_type`, `similarity`만 사용합니다.
 
 ### `/detect` 응답
@@ -237,10 +238,12 @@ flutter run          # 연결된 기기에 자동 설치 및 실행
 | Stage | 기술 | 조건 (동일앱) | 조건 (크로스앱) | 속도 |
 |-------|------|--------------|----------------|------|
 | 1 — HASH | pHash 해밍 거리 | ≤ 8 | ≤ 4 | <1ms |
-| 2 — FAST | CLIP 코사인 유사도 | ≥ 0.90 | ≥ 0.95 | ~80ms |
+| 2 — FAST | CLIP 코사인 유사도 | ≥ 0.91 | ≥ 0.95 | ~80ms |
 | 3 — DEEP | Gemini 2.5 Flash Vision | 미스 시 항상 | — | 1~3s |
 
 > **크로스앱 이중 임계값**: 같은 카테고리 내 다른 앱 항목과 매칭할 때는 더 높은 임계값을 요구하여 모양은 비슷하지만 기능이 다른 UI 오탐을 방지합니다.
+
+> **모호성 거부**: 1위와 설명이 다른 후보의 점수가 너무 가까우면 캐시를 쓰지 않고 Gemini로 넘깁니다. pHash는 동점일 때, CLIP은 차이가 0.02 미만일 때 거부합니다. CLIP이 한글 글자 크롭을 서로 비슷하게 보는 문제로 생기던 오답을 막습니다.
 
 ---
 
@@ -266,6 +269,14 @@ venv/bin/python3 tools/visualize_detections.py db/screenshots/naver_map.jpg
 
 # 캐시 파이프라인 통합 테스트
 venv/bin/python3 tests/run_full_test.py --skip_seed
+
+# 캐시 정확도 평가 (임계값·seed 변경 후 필수)
+venv/bin/python3 tests/eval_cache.py build   # 최초 1회
+venv/bin/python3 tests/eval_cache.py run
+
+# 잘못된 설명 캐시 정리 (서버 종료 후)
+venv/bin/python3 tools/clean_db.py           # 미리보기
+venv/bin/python3 tools/clean_db.py --apply   # 삭제
 
 # DB 저장 수 확인
 curl http://localhost:8000/db/count
