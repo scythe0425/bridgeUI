@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from db.chroma_store import get_collection
 from pipeline.embedder import embed_image, warmup as warmup_clip
 from pipeline.hash_track import compute as phash_compute, to_str as phash_to_str
+from pipeline.roles import ALL_ROLES, ROLE_OTHER
 from pipeline.ui_detector import detect_from_full_screenshot, warmup as warmup_yolo
 
 # ─────────────────────────────────────────────
@@ -53,6 +54,7 @@ class UIElement(NamedTuple):
     label: str           # UI 요소 레이블 (한국어)
     description: str     # 노년층 친화적 목적 중심 설명 (2문장 이내)
     screenshot: str = "" # 소속 스크린샷 파일명. 비어있으면 APP_CONFIG 첫 번째 사용
+    role: str = ROLE_OTHER  # 기능적 역할 (pipeline/roles.py). 분류표 밖이면 "other"
 
 
 # ─────────────────────────────────────────────
@@ -107,6 +109,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
         "검색창",
         "먹고 싶은 음식이나 가게 이름을 검색할 수 있어요. "
         "글자를 입력하면 관련 가게가 나와요.",
+        role="search",
     ),
 
     # ── 프로모션 배너 버튼 ──────────────────────
@@ -184,6 +187,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
         "한식 카테고리",
         "한국 음식을 배달시킬 수 있어요. "
         "누르면 한식 음식점 목록이 나와요.",
+        role="category",
     ),
     UIElement(
         "baemin_cat_chinese",
@@ -193,6 +197,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
         "중식 카테고리",
         "짜장면, 짬뽕 같은 중국 음식을 배달시킬 수 있어요. "
         "눌러보면 가까운 중식 가게가 나와요.",
+        role="category",
     ),
     UIElement(
         "baemin_cat_fastfood",
@@ -202,6 +207,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
         "패스트푸드 카테고리",
         "햄버거, 피자 같은 패스트푸드를 배달시킬 수 있어요. "
         "눌러보면 주변 패스트푸드 가게가 나와요.",
+        role="category",
     ),
     UIElement(
         "baemin_cat_snack",
@@ -211,6 +217,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
         "분식 카테고리",
         "떡볶이, 순대, 튀김 같은 분식을 배달시킬 수 있어요. "
         "눌러보면 분식 가게 목록이 나와요.",
+        role="category",
     ),
 
     # ── 음식 카테고리 2행 ──────────────────────
@@ -222,6 +229,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
         "치킨 카테고리",
         "치킨을 배달시킬 수 있어요. "
         "눌러보면 주변 치킨 가게가 나와요.",
+        role="category",
     ),
     UIElement(
         "baemin_cat_cafe",
@@ -231,6 +239,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
         "카페·디저트 카테고리",
         "커피, 케이크, 디저트를 배달시킬 수 있어요. "
         "좋아하는 음료나 간식을 집에서 받을 수 있어요.",
+        role="category",
     ),
     UIElement(
         "baemin_cat_bowl",
@@ -240,6 +249,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
         "한그릇 카테고리",
         "국밥, 순대국 등 든든하고 따뜻한 한 그릇을 배달시킬 수 있어요. "
         "혼자 먹기 좋은 음식들이 모여 있어요.",
+        role="category",
     ),
     UIElement(
         "baemin_cat_pickupevent",
@@ -327,6 +337,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
         "팝업 닫기 X 버튼",
         "하단에 떠있는 할인 알림창을 닫는 버튼이에요. "
         "눌러서 창을 없앨 수 있어요.",
+        role="close",
     ),
 
     # ── 하단 탭바 ──────────────────────────────
@@ -338,6 +349,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
         "홈 탭",
         "처음 화면으로 돌아가는 버튼이에요. "
         "눌러보면 메인 화면이 나와요.",
+        role="nav_home",
     ),
     UIElement(
         "baemin_nav_shopping",
@@ -355,6 +367,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
         "쏠 탭",
         "마음에 들어 저장해 둔 가게나 음식을 볼 수 있어요. "
         "좋아하는 가게를 여기에 모아둘 수 있어요.",
+        role="nav_saved",
     ),
     UIElement(
         "baemin_nav_orders",
@@ -372,6 +385,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
         "tab",
         "마이배민 탭",
         "내 계정 정보, 포인트, 쿠폰을 관리할 수 있는 내 페이지에요.",
+        role="profile",
     ),
 ]
 
@@ -389,6 +403,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "검색창 + 마이크",
         "가고 싶은 장소나 주소를 입력해서 찾을 수 있어요. "
         "마이크 버튼을 누르면 말로도 검색할 수 있어요.",
+        role="search",
     ),
     UIElement(
         "navermap_profile",
@@ -398,6 +413,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "프로필 아이콘",
         "내 계정 정보와 저장한 장소를 확인할 수 있어요. "
         "로그인 상태도 여기서 볼 수 있어요.",
+        role="profile",
     ),
     UIElement(
         "navermap_directions",
@@ -407,6 +423,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "길찾기 → 파란 버튼",
         "원하는 목적지까지 길 안내를 받을 수 있어요. "
         "누르면 출발지와 목적지를 입력하는 화면이 나와요.",
+        role="directions",
     ),
 
     # ── 카테고리 칩 ─────────────────────────────
@@ -418,6 +435,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "음식점 카테고리 칩",
         "주변 음식점을 지도에서 찾을 수 있어요. "
         "누르면 가까운 식당들이 지도에 표시돼요.",
+        role="category",
     ),
     UIElement(
         "navermap_chip_cafe",
@@ -427,6 +445,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "카페 카테고리 칩",
         "주변 카페를 지도에서 찾을 수 있어요. "
         "누르면 가까운 커피숍이 지도에 표시돼요.",
+        role="category",
     ),
     UIElement(
         "navermap_chip_popup",
@@ -436,6 +455,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "팝업스토어 카테고리 칩",
         "주변 팝업스토어 매장을 지도에서 찾을 수 있어요. "
         "한시 기간 이용하는 특별 매장을 볼 수 있어요.",
+        role="category",
     ),
     UIElement(
         "navermap_chip_takeout",
@@ -445,6 +465,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "N포장 카테고리 칩",
         "포장 주문이 가능한 가게를 지도에서 찾을 수 있어요. "
         "가게에 가서 바로 받을 수 있는 포장 메뉴에요.",
+        role="category",
     ),
 
     # ── 지도 광고 닫기 ──────────────────────────
@@ -456,6 +477,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "광고 닫기 X 버튼",
         "지도 위에 표시된 광고 창을 닫는 버튼이에요. "
         "눌러서 광고를 없앨 수 있어요.",
+        role="close",
     ),
 
     # ── 지도 우측 버튼 ──────────────────────────
@@ -467,6 +489,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "지도 레이어 버튼",
         "지도 종류를 바꿀 수 있어요. "
         "위성사진이나 스트리트뷰 등으로 바꿔서 볼 수 있어요.",
+        role="map_layer",
     ),
     UIElement(
         "navermap_bookmark",
@@ -476,6 +499,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "즐겨찾기 ★ 버튼",
         "자주 가는 장소를 즐겨찾기에 저장할 수 있어요. "
         "저장해두면 다음에 바로 찾기 쉬워요.",
+        role="save",
     ),
     UIElement(
         "navermap_savelocation",
@@ -494,6 +518,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "현위치 ◎ 버튼",
         "지금 내가 있는 위치로 지도를 이동해요. "
         "누르면 현재 위치가 화면 가운데에 나와요.",
+        role="current_location",
     ),
 
     # ── 하단 탭바 ──────────────────────────────
@@ -523,6 +548,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "대중교통 탭",
         "버스나 지하철로 가는 방법을 찾을 수 있어요. "
         "출발지와 목적지를 입력하면 경로를 알려줘요.",
+        role="mode_transit",
     ),
     UIElement(
         "navermap_nav_navi",
@@ -532,6 +558,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "내비게이션 탭",
         "이동할 때 길 안내를 받을 수 있어요. "
         "목적지를 입력하면 차로 가는 길을 알려줘요.",
+        role="mode_car",
     ),
     UIElement(
         "navermap_nav_saved",
@@ -541,6 +568,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "저장 탭",
         "내가 저장해 둔 장소 목록을 볼 수 있어요. "
         "집이나 자주 가는 곳을 여기서 빠르게 찾을 수 있어요.",
+        role="nav_saved",
     ),
 
     # ══════════════════════════════════════════════════════
@@ -555,6 +583,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "이전 화면으로 돌아가는 버튼이에요. "
         "길찾기를 그만하고 지도로 돌아갈 때 눌러요.",
         "naver_map_directions_7.png",
+        role="back",
     ),
     UIElement(
         "navermap_dir_to_input",
@@ -565,6 +594,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "도착하고 싶은 곳을 입력하는 칸이에요. "
         "눌러서 목적지 주소나 장소 이름을 입력하면 돼요.",
         "naver_map_directions_7.png",
+        role="route_input",
     ),
     UIElement(
         "navermap_dir_my_location",
@@ -595,6 +625,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "미리 저장해 둔 집 주소로 빠르게 목적지를 설정해요. "
         "집으로 돌아가는 경로를 찾을 때 눌러요.",
         "naver_map_directions_7.png",
+        role="home_shortcut",
     ),
     UIElement(
         "navermap_dir_recent_tab",
@@ -619,6 +650,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "걸어서 목적지까지 가는 경로를 안내해요. "
         "걸어가는 시간과 거리를 알 수 있어요.",
         "naver_map_directions_4.png",
+        role="mode_walk",
     ),
     UIElement(
         "navermap_dir_tab_transit",
@@ -629,6 +661,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "버스나 지하철로 목적지까지 가는 방법을 안내해요. "
         "환승 정보와 요금도 보여줘요.",
         "naver_map_directions_4.png",
+        role="mode_transit",
     ),
     UIElement(
         "navermap_dir_tab_subway",
@@ -649,6 +682,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "자동차로 목적지까지 가는 경로를 안내해요. "
         "예상 도착 시간과 주차 정보도 알 수 있어요.",
         "naver_map_directions_4.png",
+        role="mode_car",
     ),
 
     # ══════════════════════════════════════════════════════
@@ -663,6 +697,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "선택한 경로로 길 안내를 시작해요. "
         "이 버튼을 누르면 목소리로 길을 알려줘요.",
         "naver_map_directions_5.png",
+        role="start_navigation",
     ),
     UIElement(
         "navermap_dir_later_depart",
@@ -673,6 +708,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "지금 바로 출발하지 않고 나중에 떠날 시간을 정할 수 있어요. "
         "예상 도착 시간을 미리 확인할 때 써요.",
         "naver_map_directions_5.png",
+        role="departure_time",
     ),
 
     # ══════════════════════════════════════════════════════
@@ -687,6 +723,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "이 장소를 출발지로 설정하여 길을 찾을 수 있어요. "
         "여기서 출발하는 경로를 바로 검색할 때 눌러요.",
         "naver_map_detail.png",
+        role="set_origin",
     ),
     UIElement(
         "navermap_detail_arrive",
@@ -697,6 +734,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "이 장소까지 어떻게 가는지 길 안내를 받을 수 있어요. "
         "누르면 출발지를 입력하는 화면이 나와요.",
         "naver_map_detail.png",
+        role="set_destination",
     ),
     UIElement(
         "navermap_detail_share",
@@ -707,6 +745,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "이 장소 정보를 가족이나 지인에게 보낼 수 있어요. "
         "만날 장소를 알려줄 때 사용해요.",
         "naver_map_detail.png",
+        role="share",
     ),
     UIElement(
         "navermap_detail_map_layer",
@@ -717,6 +756,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "지도 종류를 바꿀 수 있어요. "
         "위성사진이나 스트리트뷰 등으로 바꿔서 볼 수 있어요.",
         "naver_map_detail.png",
+        role="map_layer",
     ),
     UIElement(
         "navermap_detail_bookmark",
@@ -727,6 +767,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "이 장소를 즐겨찾기에 저장할 수 있어요. "
         "저장해두면 다음에 바로 찾기 쉬워요.",
         "naver_map_detail.png",
+        role="save",
     ),
     UIElement(
         "navermap_detail_pin",
@@ -747,6 +788,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "지금 내가 있는 위치로 지도를 이동해요. "
         "누르면 현재 위치가 화면 가운데에 나와요.",
         "naver_map_detail.png",
+        role="current_location",
     ),
 
     # ══════════════════════════════════════════════════════
@@ -761,6 +803,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "이 장소를 출발지로 설정하여 길을 찾을 수 있어요. "
         "여기서 출발하는 경로를 바로 검색할 때 눌러요.",
         "naver_map_detail_2.png",
+        role="set_origin",
     ),
     UIElement(
         "navermap_detail_arrive_v2",
@@ -771,6 +814,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "이 장소까지 어떻게 가는지 길 안내를 받을 수 있어요. "
         "누르면 출발지를 입력하는 화면이 나와요.",
         "naver_map_detail_2.png",
+        role="set_destination",
     ),
     UIElement(
         "navermap_detail_share_v2",
@@ -781,6 +825,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "이 장소 정보를 가족이나 지인에게 보낼 수 있어요. "
         "만날 장소를 알려줄 때 사용해요.",
         "naver_map_detail_2.png",
+        role="share",
     ),
     UIElement(
         "navermap_detail_call",
@@ -791,6 +836,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
         "이 장소에 바로 전화를 걸 수 있어요. "
         "영업 시간이나 예약을 확인하고 싶을 때 눌러요.",
         "naver_map_detail_2.png",
+        role="call",
     ),
 ]
 
@@ -826,6 +872,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
         "메뉴 ≡ 아이콘",
         "앱의 모든 기능 목록을 볼 수 있어요. "
         "더 많은 서비스가 여기 있어요.",
+        role="menu",
     ),
 
     # ── 승차권 이메 카드 ────────────────────────
@@ -845,6 +892,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
         "icon",
         "⋮ 옵션 메뉴",
         "예매와 관련된 추가 옵션을 볼 수 있어요.",
+        role="menu",
     ),
     UIElement(
         "korail_swap_stations",
@@ -854,6 +902,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
         "출발·도착 교환 ⇄ 버튼",
         "출발역과 도착역을 서로 바꿔요. "
         "용산→부산을 부산→용산으로 바꿀 때 눌러요.",
+        role="swap_route",
     ),
     UIElement(
         "korail_departure_station",
@@ -863,6 +912,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
         "출발역 선택 (용산)",
         "출발하는 역을 바꿀 수 있어요. "
         "눌러보면 역 이름을 검색하거나 선택할 수 있어요.",
+        role="route_input",
     ),
     UIElement(
         "korail_arrival_station",
@@ -872,6 +922,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
         "도착역 선택 (부산)",
         "도착하는 역을 바꿀 수 있어요. "
         "눌러보면 역 이름을 검색하거나 선택할 수 있어요.",
+        role="route_input",
     ),
     UIElement(
         "korail_date_select",
@@ -881,6 +932,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
         "가는날 선택",
         "기차 타는 날짜와 시간을 고를 수 있어요. "
         "달력에서 날짜를 선택하면 돼요.",
+        role="departure_time",
     ),
     UIElement(
         "korail_passenger_select",
@@ -930,6 +982,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
         "길안내 서비스",
         "기차역까지 가는 방법을 안내해 줘요. "
         "역을 찾아갈 때 도움이 돼요.",
+        role="directions",
     ),
     UIElement(
         "korail_service_trainloc",
@@ -968,6 +1021,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
         "홈 탭",
         "코레일 앱의 처음 화면으로 돌아가요. "
         "기차 예매 화면이 나와요.",
+        role="nav_home",
     ),
     UIElement(
         "korail_nav_benefits",
@@ -1132,6 +1186,8 @@ def seed_app(
 
     for elem in elements:
         label_str = f"  [{elem.element_type:6s}] {elem.label}"
+        if elem.role not in ALL_ROLES:
+            raise ValueError(f"{elem.element_id}: 알 수 없는 역할 {elem.role!r}")
 
         # bbox (0,0,0,0): 스크린샷 추가 대기 → 스킵
         if elem.bbox == (0, 0, 0, 0):
@@ -1191,6 +1247,7 @@ def seed_app(
                     "source":       "seed",
                     "crop_method":  crop_method,
                     "screenshot":   fn,
+                    "role":         elem.role,
                 }],
                 documents=[elem.description],
             )

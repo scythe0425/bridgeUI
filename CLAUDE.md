@@ -614,6 +614,8 @@ venv/bin/python3 tests/eval_cache.py build      # 최초 1회: 평가 박스 크
 venv/bin/python3 tests/eval_cache.py run        # 맞은/틀린 히트·미스 집계
 venv/bin/python3 tests/eval_cache.py sheet      # 라벨 없는 히트가 생기면 시트로 판정
 venv/bin/python3 tests/eval_cache.py label "0:1,1:0"
+venv/bin/python3 tests/eval_cache.py rolesheet  # 역할 라벨 없는 박스를 시트로
+venv/bin/python3 tests/eval_cache.py rolelabel "0:search,1:other"
 
 # 잘못된 설명(중계 메시지·잘린 문장) 캐시 정리 — 서버 종료 후 실행
 venv/bin/python3 tools/clean_db.py             # 미리보기
@@ -705,10 +707,11 @@ bridge-ui/
 │   │   ├── ui_detector.py                   # OmniParser YOLOv8 Phase 3 + 구버전 패딩 폴백
 │   │   ├── hash_track.py                    # Stage 1: pHash 인메모리 스토어 + 크로스앱 임계값
 │   │   ├── fast_track.py                    # Stage 2: CLIP + 카테고리 $in 필터 + 크로스앱 임계값
-│   │   └── deep_track.py                    # Stage 3: Gemini 2.5 Flash Vision 설명 생성
+│   │   ├── deep_track.py                    # Stage 3: Gemini 2.5 Flash Vision 설명 생성
+│   │   └── roles.py                         # 기능적 역할 분류표 30종 + 표준 설명 (역할 기반 매칭용)
 │   ├── tests/
 │   │   ├── eval_cache.py                    # 캐시 정확도 평가 (build / sheet / label / run)
-│   │   ├── eval/                            # boxes.json·labels.json (crops/·sheets/는 gitignore)
+│   │   ├── eval/                            # boxes.json·labels.json·roles.json (crops/·sheets/는 gitignore)
 │   │   ├── test_detector.py                 # OmniParser conf 분포·임계값 진단
 │   │   ├── test_stage2.py                   # Stage 2 CLIP 유사도 히트 검증
 │   │   ├── test_cache_pipeline.py           # 3단계 캐시 파이프라인 통합 테스트
