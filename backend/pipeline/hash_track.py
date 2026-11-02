@@ -19,6 +19,9 @@ from PIL import Image
 HAMMING_THRESHOLD = 8
 # 크로스앱 히트: 같은 카테고리지만 다른 앱 항목과 매칭 시 더 엄격한 임계값 적용
 CROSS_APP_HAMMING_THRESHOLD = 4
+# 모호성 거부: 1위와 설명이 다른 후보의 거리 차이가 이 값보다 작으면 캐시 미스.
+# 1이면 동점만 거부합니다 (예: seed에서 같은 YOLO 크롭에 설명이 둘 붙은 경우).
+HAMMING_MARGIN = 1
 
 # element_id → (phash, description, element_type, app_package)
 _store: dict[str, tuple[imagehash.ImageHash, str, str, str]] = {}
@@ -80,6 +83,7 @@ def search(
     app_packages가 지정되면 해당 앱 목록 내에서만 비교합니다.
     own_package를 지정하면 다른 앱 항목에는 더 엄격한 해밍 임계값(≤4)을 적용하여
     모양은 비슷하지만 기능이 다른 크로스앱 오탐을 방지합니다.
+    설명이 다른 후보가 1위와 HAMMING_MARGIN 이내로 가까우면 캐시 미스로 처리합니다.
 
     Args:
         image_bytes: 쿼리 이미지 바이트.
@@ -94,27 +98,33 @@ def search(
         return None
 
     ph = compute(image_bytes)
-    best_dist = HAMMING_THRESHOLD + 1
-    best: dict | None = None
-
     pkg_set = set(app_packages) if app_packages else None
 
+    # 임계값을 통과한 후보를 모두 모은 뒤 가장 가까운 항목을 고릅니다.
+    matches: list[dict] = []
     for elem_id, (stored_ph, desc, el_type, pkg) in _store.items():
         if pkg_set and pkg not in pkg_set:
             continue
         cross_app = bool(own_package and pkg and pkg != own_package)
         threshold = CROSS_APP_HAMMING_THRESHOLD if cross_app else HAMMING_THRESHOLD
         dist = ph - stored_ph
-        if dist <= threshold and dist < best_dist and desc:
-            best_dist = dist
-            best = {
+        if dist <= threshold and desc:
+            matches.append({
                 "id": elem_id,
                 "description": desc,
                 "element_type": el_type,
                 "hamming": dist,
                 "cross_app": cross_app,
-            }
+            })
 
+    if not matches:
+        return None
+    best = min(matches, key=lambda m: m["hamming"])
+
+    # 모호성 거부: 설명이 다른 후보가 HAMMING_MARGIN 이내로 가까우면 어느 쪽인지 판단 불가
+    if any(m["description"] != best["description"]
+           and m["hamming"] - best["hamming"] < HAMMING_MARGIN for m in matches):
+        return None
     return best
 
 
