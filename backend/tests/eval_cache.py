@@ -12,10 +12,16 @@ seed에 쓰지 않은 실제 해상도 스크린샷에서 /detect와 같은 방�
     venv/bin/python3 tests/eval_cache.py sheet      # 라벨이 필요한 쌍을 시트 이미지로 출력
     venv/bin/python3 tests/eval_cache.py label "0:1,1:0"   # 시트 번호별 판정 반영 (1=맞음)
     venv/bin/python3 tests/eval_cache.py run        # 현재 코드로 정확도 측정
+    venv/bin/python3 tests/eval_cache.py rolesheet  # 역할 라벨이 없는 박스를 시트로 출력
+    venv/bin/python3 tests/eval_cache.py rolelabel "0:search,1:other"   # 시트 번호별 역할 반영
+    venv/bin/python3 tests/eval_cache.py rolerun    # 역할 분류기 정밀도·재현율 측정
+
+build는 boxes.json에 아직 없는 스크린샷만 탐지하므로, 평가 화면을 추가해도 기존 박스 키와 라벨이 유지됩니다.
 
 파일:
     tests/eval/boxes.json   박스 목록 (커밋 대상)
     tests/eval/labels.json  {박스 키: {설명 문장: true/false}} (커밋 대상)
+    tests/eval/roles.json   {박스 키: 역할} — pipeline/roles.py 기준 (커밋 대상)
     tests/eval/crops/       박스 크롭 PNG (gitignore — 스크린샷에서 재생성 가능)
     tests/eval/sheets/      라벨링용 시트 이미지 (gitignore)
 """
@@ -35,15 +41,21 @@ CROP_DIR = EVAL_DIR / "crops"
 SHEET_DIR = EVAL_DIR / "sheets"
 BOXES_FILE = EVAL_DIR / "boxes.json"
 LABELS_FILE = EVAL_DIR / "labels.json"
+ROLES_FILE = EVAL_DIR / "roles.json"
 SCREENSHOT_DIR = BACKEND / "db" / "screenshots"
 
-# seed_db.APP_CONFIG에 포함되지 않은 네이버 지도 스크린샷 (평가 전용)
-EVAL_SCREENSHOTS = [
-    "naver_map_2.png", "naver_map_3.png", "naver_map_4.png", "naver_map_5.png",
-    "naver_map_directions.png", "naver_map_directions_2.png",
-    "naver_map_directions_3.png", "naver_map_directions_6.png",
-]
-APP_PACKAGE = "com.nhn.android.nmap"
+NAVER, GOOGLE, KAKAO = "com.nhn.android.nmap", "com.google.android.apps.maps", "net.daum.android.map"
+
+# seed_db.APP_CONFIG에 포함되지 않은 스크린샷 (평가 전용) → 촬영한 앱 패키지
+EVAL_SCREENSHOTS = {
+    "naver_map_2.png": NAVER, "naver_map_3.png": NAVER,
+    "naver_map_4.png": NAVER, "naver_map_5.png": NAVER,
+    "naver_map_directions.png": NAVER, "naver_map_directions_2.png": NAVER,
+    "naver_map_directions_3.png": NAVER, "naver_map_directions_6.png": NAVER,
+    "google_map_directions.png": GOOGLE, "google_map_search.png": GOOGLE,
+    "kakao_map_directions.png": KAKAO, "kakao_map_search.png": KAKAO,
+}
+APP_LABELS = {NAVER: "네이버 지도", GOOGLE: "구글 지도", KAKAO: "카카오맵"}
 
 DETECT_CONF = 0.3          # /detect 엔드포인트와 동일
 CANDIDATE_MIN_SIM = 0.85   # 이보다 낮은 CLIP 후보는 어떤 규칙에서도 히트하지 않으므로 라벨 불필요
@@ -70,27 +82,73 @@ def _load_json(path: Path, default):
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
 
 
-def _category_packages() -> list[str]:
-    """평가 앱이 속한 카테고리 패키지 목록을 main.py와 같은 규칙으로 반환합니다."""
+def _package(box: dict) -> str:
+    """박스가 속한 스크린샷의 앱 패키지를 반환합니다."""
+    return EVAL_SCREENSHOTS[box["screenshot"]]
+
+
+def _category_packages(package: str) -> list[str]:
+    """앱이 속한 카테고리 패키지 목록을 main.py와 같은 규칙으로 반환합니다."""
     from main import _get_category_packages
-    return _get_category_packages(APP_PACKAGE)
+    return _get_category_packages(package)
+
+
+def _context_image(shot, box: list[int], size: tuple[int, int]):
+    """박스 주변을 잘라 빨간 테두리를 그린 맥락 이미지를 만듭니다.
+
+    Args:
+        shot: 전체 스크린샷 PIL 이미지.
+        box: (x1, y1, x2, y2) 물리 픽셀 좌표.
+        size: 결과 이미지가 들어갈 최대 (너비, 높이).
+
+    Returns:
+        크기가 size 이하로 줄어든 PIL 이미지.
+    """
+    from PIL import ImageDraw
+
+    x1, y1, x2, y2 = box
+    pad_x, pad_y = max(120, (x2 - x1)), max(80, (y2 - y1))
+    region = (max(0, x1 - pad_x), max(0, y1 - pad_y),
+              min(shot.width, x2 + pad_x), min(shot.height, y2 + pad_y))
+    ctx = shot.crop(region).copy()
+    ImageDraw.Draw(ctx).rectangle(
+        (x1 - region[0], y1 - region[1], x2 - region[0], y2 - region[1]),
+        outline="red", width=4)
+    ctx.thumbnail(size)
+    return ctx
+
+
+def _font(size: int):
+    """한글이 나오는 시스템 글꼴을 찾습니다. 없으면 기본 글꼴을 씁니다."""
+    from PIL import ImageFont
+
+    font_path = next((f for f in ["/mnt/c/Windows/Fonts/malgun.ttf",
+                                  "/usr/share/fonts/truetype/nanum/NanumGothic.ttf"]
+                      if Path(f).exists()), None)
+    return ImageFont.truetype(font_path, size) if font_path else ImageFont.load_default()
 
 
 def build() -> None:
-    """평가 스크린샷에서 박스를 탐지하고, /capture와 같은 방식으로 요소 크롭을 저장합니다."""
+    """평가 스크린샷에서 박스를 탐지하고, /capture와 같은 방식으로 요소 크롭을 저장합니다.
+
+    boxes.json에 이미 있는 스크린샷은 건너뛰고 새 스크린샷의 박스만 덧붙입니다.
+    """
     from PIL import Image
-    from pipeline.ui_detector import _get_model, detect_from_full_screenshot
+    from pipeline.ui_detector import _predict, detect_from_full_screenshot
 
     CROP_DIR.mkdir(parents=True, exist_ok=True)
-    boxes = []
+    boxes = _load_json(BOXES_FILE, [])
+    done = {b["screenshot"] for b in boxes}
     for shot in EVAL_SCREENSHOTS:
+        if shot in done:
+            continue
         path = SCREENSHOT_DIR / shot
         if not path.exists():
             print(f"[skip] 스크린샷 없음: {path}")
             continue
         data = path.read_bytes()
         image = Image.open(io.BytesIO(data)).convert("RGB")
-        result = _get_model().predict(image, verbose=False, conf=DETECT_CONF)
+        result = _predict(image, DETECT_CONF)
         for xyxy in result[0].boxes.xyxy:
             box = [int(v) for v in xyxy.tolist()]
             detection = _quiet(detect_from_full_screenshot, data, *box)
@@ -118,9 +176,9 @@ def _candidates(boxes: list[dict]) -> list[tuple[dict, str, str, str]]:
 
     collection = get_collection()
     hash_track.load_from_collection(collection)
-    cats = set(_category_packages())
     pairs = []
     for b in boxes:
+        cats = set(_category_packages(_package(b)))
         crop = (CROP_DIR / b["crop"]).read_bytes()
         # Stage 1 후보: 카테고리 내 해밍 거리 최소 항목 (동점이면 모두)
         ph = hash_track.compute(crop)
@@ -151,7 +209,7 @@ def _candidates(boxes: list[dict]) -> list[tuple[dict, str, str, str]]:
 def sheet() -> None:
     """라벨이 없는 (박스, 항목) 쌍을 화면 맥락과 설명이 함께 보이는 시트 이미지로 출력합니다."""
     import textwrap
-    from PIL import Image, ImageDraw, ImageFont
+    from PIL import Image, ImageDraw
 
     boxes = _load_json(BOXES_FILE, [])
     if not boxes:
@@ -165,12 +223,9 @@ def sheet() -> None:
             todo.append(p)
 
     SHEET_DIR.mkdir(parents=True, exist_ok=True)
-    for old in SHEET_DIR.glob("*"):
-        old.unlink()
-    font_path = next((f for f in ["/mnt/c/Windows/Fonts/malgun.ttf",
-                                  "/usr/share/fonts/truetype/nanum/NanumGothic.ttf"]
-                      if Path(f).exists()), None)
-    font = ImageFont.truetype(font_path, 15) if font_path else ImageFont.load_default()
+    for old in [*SHEET_DIR.glob("sheet_*.png"), SHEET_DIR / "index.json"]:
+        old.unlink(missing_ok=True)
+    font = _font(15)
 
     cell_w, img_h, text_h, cols, rows = 380, 230, 80, 4, 4
     per_sheet = cols * rows
@@ -183,15 +238,7 @@ def sheet() -> None:
             n = s + i
             shot = screenshots.setdefault(
                 b["screenshot"], Image.open(SCREENSHOT_DIR / b["screenshot"]).convert("RGB"))
-            x1, y1, x2, y2 = b["box"]
-            pad_x, pad_y = max(120, (x2 - x1)), max(80, (y2 - y1))
-            region = (max(0, x1 - pad_x), max(0, y1 - pad_y),
-                      min(shot.width, x2 + pad_x), min(shot.height, y2 + pad_y))
-            ctx = shot.crop(region).copy()
-            ImageDraw.Draw(ctx).rectangle(
-                (x1 - region[0], y1 - region[1], x2 - region[0], y2 - region[1]),
-                outline="red", width=4)
-            ctx.thumbnail((cell_w - 10, img_h - 22))
+            ctx = _context_image(shot, b["box"], (cell_w - 10, img_h - 22))
             cx, cy = (i % cols) * cell_w, (i // cols) * (img_h + text_h)
             canvas.paste(ctx, (cx + 5, cy + 20))
             draw.text((cx + 5, cy + 2), f"#{n}  {source}", fill="blue", font=font)
@@ -226,63 +273,205 @@ def apply_labels(judgements: str) -> None:
 
 
 def run() -> None:
-    """현재 코드의 Stage 1/2 검색을 그대로 호출해 맞은 히트·틀린 히트·미스를 셉니다."""
+    """/capture와 같은 순서로 Stage 1 → 2 → 2.5(역할)를 호출해 맞은·틀린 응답과 미스를 셉니다.
+
+    Stage 1/2는 labels.json(설명 단위), Stage 2.5는 roles.json(역할 단위)으로 채점합니다.
+    미스는 실제 서비스에서 Gemini(Stage 3)가 호출되는 박스입니다.
+    """
+    from PIL import Image
     from db.chroma_store import get_collection
     from pipeline.embedder import embed_image
     from pipeline.fast_track import search as fast_search
     from pipeline.hash_track import load_from_collection, search as hash_search
+    from pipeline.role_classifier import classify as role_classify
 
     boxes = _load_json(BOXES_FILE, [])
     if not boxes:
         sys.exit("boxes.json이 없습니다. 먼저 build를 실행하세요.")
     labels = _load_json(LABELS_FILE, {})
-    load_from_collection(get_collection())
-    cats = _category_packages()
+    roles = _load_json(ROLES_FILE, {})
+    collection = get_collection()
+    load_from_collection(collection)
+    sizes: dict[str, tuple[int, int]] = {}
 
-    stats = {f"{t}_{r}": 0 for t in ("hash", "fast") for r in ("ok", "bad", "unlabeled")}
-    stats["miss"] = 0
-    wrong = []
+    def empty_stats() -> dict:
+        stats = {f"{t}_{r}": 0 for t in ("hash", "fast", "role") for r in ("ok", "bad", "unlabeled")}
+        stats.update(miss=0, total=0)
+        return stats
+
+    by_app = {pkg: empty_stats() for pkg in dict.fromkeys(EVAL_SCREENSHOTS.values())}
     for b in boxes:
+        pkg = _package(b)
+        stats = by_app[pkg]
+        stats["total"] += 1
+        cats = _category_packages(pkg)
         crop = (CROP_DIR / b["crop"]).read_bytes()
-        result = hash_search(crop, app_packages=cats, own_package=APP_PACKAGE)
+        result = hash_search(crop, app_packages=cats, own_package=pkg)
         track = "hash"
+        vector = None
         if not result:
-            result = fast_search(embed_image(crop), app_packages=cats, own_package=APP_PACKAGE)
+            vector = embed_image(crop)
+            result = fast_search(vector, app_packages=cats, own_package=pkg)
             track = "fast"
-        if not result:
-            stats["miss"] += 1
-            continue
-        verdict = labels.get(b["key"], {}).get(result["description"])
+        if result:
+            verdict = labels.get(b["key"], {}).get(result["description"])
+        else:
+            if b["screenshot"] not in sizes:
+                sizes[b["screenshot"]] = Image.open(SCREENSHOT_DIR / b["screenshot"]).size
+            result = role_classify(crop, vector, collection, cats, own_package=pkg,
+                                   box=tuple(b["box"]), screen=sizes[b["screenshot"]])
+            track = "role"
+            if not result:
+                stats["miss"] += 1
+                continue
+            truth = roles.get(b["key"])
+            verdict = None if truth is None else result["role"] == truth
         if verdict is None:
             stats[f"{track}_unlabeled"] += 1
         elif verdict:
             stats[f"{track}_ok"] += 1
         else:
             stats[f"{track}_bad"] += 1
-            wrong.append((b["key"], track, result["description"][:40]))
 
-    total = len(boxes)
-    hits_ok = stats["hash_ok"] + stats["fast_ok"]
-    hits_bad = stats["hash_bad"] + stats["fast_bad"]
-    unlabeled = stats["hash_unlabeled"] + stats["fast_unlabeled"]
-    print(f"박스 {total}개")
-    print(f"  Stage 1 hash : 맞음 {stats['hash_ok']:3d} / 틀림 {stats['hash_bad']:3d} / 라벨없음 {stats['hash_unlabeled']}")
-    print(f"  Stage 2 fast : 맞음 {stats['fast_ok']:3d} / 틀림 {stats['fast_bad']:3d} / 라벨없음 {stats['fast_unlabeled']}")
-    print(f"  미스(Gemini) : {stats['miss']:3d}")
-    labeled_hits = hits_ok + hits_bad
-    if labeled_hits:
-        print(f"  틀린 히트 비율 : {hits_bad / labeled_hits:.1%} ({hits_bad}/{labeled_hits})")
-    print(f"  맞는 캐시 응답 비율 : {hits_ok / total:.1%}")
-    if unlabeled:
-        print(f"  ⚠ 라벨 없는 히트 {unlabeled}개 — sheet로 라벨을 추가하세요.")
+    def pct(n: int, d: int) -> str:
+        return f"{n / d:.1%} ({n}/{d})" if d else "-"
+
+    for pkg, stats in by_app.items():
+        total = stats["total"]
+        if not total:
+            continue
+        cache_ok = stats["hash_ok"] + stats["fast_ok"]
+        cache_bad = stats["hash_bad"] + stats["fast_bad"]
+        all_ok, all_bad = cache_ok + stats["role_ok"], cache_bad + stats["role_bad"]
+        unlabeled = sum(stats[f"{t}_unlabeled"] for t in ("hash", "fast", "role"))
+        print(f"[{APP_LABELS.get(pkg, pkg)}] 박스 {total}개")
+        print(f"  Stage 1 hash   : 맞음 {stats['hash_ok']:3d} / 틀림 {stats['hash_bad']:3d} / 라벨없음 {stats['hash_unlabeled']}")
+        print(f"  Stage 2 fast   : 맞음 {stats['fast_ok']:3d} / 틀림 {stats['fast_bad']:3d} / 라벨없음 {stats['fast_unlabeled']}")
+        print(f"  Stage 2.5 role : 맞음 {stats['role_ok']:3d} / 틀림 {stats['role_bad']:3d} / 라벨없음 {stats['role_unlabeled']}")
+        print(f"  미스(Gemini)   : {stats['miss']:3d}  — 역할 판정 없이는 {stats['miss'] + stats['role_ok'] + stats['role_bad'] + stats['role_unlabeled']}")
+        print(f"  Stage 1/2만    : 맞는 응답 {pct(cache_ok, total)} / 틀린 응답 비율 {pct(cache_bad, cache_ok + cache_bad)}")
+        print(f"  + 역할 판정    : 맞는 응답 {pct(all_ok, total)} / 틀린 응답 비율 {pct(all_bad, all_ok + all_bad)}")
+        if unlabeled:
+            print(f"  ⚠ 라벨 없는 응답 {unlabeled}개 — sheet(설명)·rolesheet(역할)로 라벨을 추가하세요.")
+
+
+def role_run() -> None:
+    """역할 분류기만 따로 돌려, roles.json 대비 앱별 정밀도·재현율을 셉니다."""
+    from PIL import Image
+    from db.chroma_store import get_collection
+    from pipeline.embedder import embed_image
+    from pipeline.role_classifier import classify
+
+    boxes = _load_json(BOXES_FILE, [])
+    roles = _load_json(ROLES_FILE, {})
+    if not roles:
+        sys.exit("roles.json이 없습니다. 먼저 rolesheet/rolelabel로 역할 라벨을 붙이세요.")
+    collection = get_collection()
+    sizes: dict[str, tuple[int, int]] = {}
+    by_app = {pkg: {"roles": 0, "ok": 0, "bad": 0, "text": 0, "neighbors": 0}
+              for pkg in dict.fromkeys(EVAL_SCREENSHOTS.values())}
+    wrong = []
+    for b in boxes:
+        truth = roles.get(b["key"])
+        if truth is None:
+            continue
+        pkg = _package(b)
+        stats = by_app[pkg]
+        if truth != "other":
+            stats["roles"] += 1
+        if b["screenshot"] not in sizes:
+            sizes[b["screenshot"]] = Image.open(SCREENSHOT_DIR / b["screenshot"]).size
+        crop = (CROP_DIR / b["crop"]).read_bytes()
+        result = classify(crop, embed_image(crop), collection, _category_packages(pkg),
+                          own_package=pkg, box=tuple(b["box"]), screen=sizes[b["screenshot"]])
+        if result is None:
+            continue
+        if result["role"] == truth:
+            stats["ok"] += 1
+            stats[result["source"]] += 1
+        else:
+            stats["bad"] += 1
+            wrong.append((b["key"], truth, result["role"], result["source"], result["text"]))
+
+    for pkg, s in by_app.items():
+        answered = s["ok"] + s["bad"]
+        precision = f"{s['ok'] / answered:.0%}" if answered else "-"
+        print(f"[{APP_LABELS.get(pkg, pkg)}] 역할 있는 박스 {s['roles']}개 — "
+              f"답함 {answered} / 맞음 {s['ok']} (글자 {s['text']}, 투표 {s['neighbors']}) / "
+              f"틀림 {s['bad']} / 정밀도 {precision} / 재현율 {s['ok']}/{s['roles']}")
+    for key, truth, pred, source, text in wrong:
+        print(f"  ✗ {key}  정답 {truth} → {pred} ({source}{': ' + text if text else ''})")
+
+
+def role_sheet() -> None:
+    """역할 라벨이 없는 박스를 화면 맥락과 함께 시트 이미지로 출력합니다."""
+    from PIL import Image, ImageDraw
+
+    boxes = _load_json(BOXES_FILE, [])
+    if not boxes:
+        sys.exit("boxes.json이 없습니다. 먼저 build를 실행하세요.")
+    roles = _load_json(ROLES_FILE, {})
+    todo = [b for b in boxes if b["key"] not in roles]
+
+    SHEET_DIR.mkdir(parents=True, exist_ok=True)
+    for old in [*SHEET_DIR.glob("role_*.png"), SHEET_DIR / "role_index.json"]:
+        old.unlink(missing_ok=True)
+    font = _font(16)
+
+    cell_w, cell_h, cols, rows = 360, 300, 4, 4
+    per_sheet = cols * rows
+    index = []
+    screenshots: dict[str, Image.Image] = {}
+    for s in range(0, len(todo), per_sheet):
+        canvas = Image.new("RGB", (cell_w * cols, cell_h * rows), "white")
+        draw = ImageDraw.Draw(canvas)
+        for i, b in enumerate(todo[s:s + per_sheet]):
+            n = s + i
+            shot = screenshots.setdefault(
+                b["screenshot"], Image.open(SCREENSHOT_DIR / b["screenshot"]).convert("RGB"))
+            ctx = _context_image(shot, b["box"], (cell_w - 10, cell_h - 26))
+            cx, cy = (i % cols) * cell_w, (i // cols) * cell_h
+            canvas.paste(ctx, (cx + 5, cy + 22))
+            draw.text((cx + 5, cy + 2), f"#{n}  {b['screenshot'].removesuffix('.png')}",
+                      fill="blue", font=font)
+            index.append({"n": n, "key": b["key"]})
+        canvas.save(SHEET_DIR / f"role_{s // per_sheet:02d}.png")
+    (SHEET_DIR / "role_index.json").write_text(
+        json.dumps(index, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"[rolesheet] 역할 라벨 필요 {len(todo)}개 → {SHEET_DIR}/role_*.png")
+
+
+def apply_roles(judgements: str) -> None:
+    """시트 번호별 역할을 roles.json에 반영합니다.
+
+    Args:
+        judgements: "0:search,1:other" 형식. 역할은 pipeline/roles.py의 키.
+    """
+    from pipeline.roles import ALL_ROLES
+
+    index = {e["n"]: e["key"] for e in _load_json(SHEET_DIR / "role_index.json", [])}
+    roles = _load_json(ROLES_FILE, {})
+    count = 0
+    for item in judgements.split(","):
+        if not item.strip():
+            continue
+        n, role = (v.strip() for v in item.split(":"))
+        if role not in ALL_ROLES:
+            sys.exit(f"알 수 없는 역할: {role!r} (#{n})")
+        roles[index[int(n)]] = role
+        count += 1
+    ROLES_FILE.write_text(json.dumps(roles, ensure_ascii=False, indent=1, sort_keys=True),
+                          encoding="utf-8")
+    print(f"[rolelabel] {count}개 반영 → {ROLES_FILE} (누적 {len(roles)}개)")
 
 
 def main() -> None:
     """명령행 인자에 따라 build / sheet / label / run을 실행합니다."""
     parser = argparse.ArgumentParser(description="캐시 파이프라인 정확도 평가")
-    parser.add_argument("command", choices=["build", "sheet", "label", "run"])
+    parser.add_argument("command", choices=["build", "sheet", "label", "run",
+                                            "rolesheet", "rolelabel", "rolerun"])
     parser.add_argument("judgements", nargs="?", default="",
-                        help='label 명령용: "번호:1|0,..." (1=맞음, 0=틀림)')
+                        help='label: "번호:1|0,..." (1=맞음, 0=틀림) / rolelabel: "번호:역할,..."')
     args = parser.parse_args()
     if args.command == "build":
         build()
@@ -290,6 +479,12 @@ def main() -> None:
         sheet()
     elif args.command == "label":
         apply_labels(args.judgements)
+    elif args.command == "rolesheet":
+        role_sheet()
+    elif args.command == "rolelabel":
+        apply_roles(args.judgements)
+    elif args.command == "rolerun":
+        role_run()
     else:
         run()
 

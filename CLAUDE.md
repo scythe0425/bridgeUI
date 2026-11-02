@@ -8,7 +8,7 @@
 
 - **프로젝트명**: bridgeUI (Senior UI-Guide Plugin)
 - **부제**: 디지털 기호(Icon) 장벽 해소를 위한 실시간 UI 번역 플러그인 구현 — 노년층 디지털 리터러시
-- **현재 상태**: Step 10 진행 중 — 3단계 캐시 파이프라인(pHash→CLIP→Gemini Vision) + 앱 카테고리 크로스앱 캐시 공유 + seed DB(94개) + YOLO 기반 UI 선택 오버레이 + 말풍선 UI 완성
+- **현재 상태**: Step 10 진행 중 — 3단계 캐시 파이프라인(pHash→CLIP→Gemini Vision) + 앱 카테고리 크로스앱 캐시 공유 + seed DB(5개 앱 142개) + YOLO 기반 UI 선택 오버레이 + 말풍선 UI 완성
 - **목적**: 지도 앱 등 복잡한 UI를 가진 앱에서 노년층 사용자가 특정 아이콘이나 버튼의 기능을 직관적으로 이해할 수 있도록 돕는 보조 도구.
 - **핵심 가치**:
   - **접근성**: 시각적 하이라이트 + 말풍선 설명 제공. (TTS 제거됨)
@@ -33,7 +33,7 @@ Claude는 코드 작성 전 현재 단계를 확인하고, 해당 단계 범위 
 | 5 | ImageCapture API 연동 및 데이터 추출·전송 | | ● | | | ✅ 완료 |
 | 5-1 | 전체 화면 기반 UI/아이콘 요소 탐지 (OmniParser YOLOv8 Phase 3) | | | ● | | ✅ 완료 |
 | 6 | Vector DB (ChromaDB) 환경 구축 + CLIP 임베딩 저장 | | | ● | | ✅ 완료 |
-| 6-1 | ChromaDB 사전 구축 — 3개 앱 94개 UI 요소 seed (다중 스크린샷) | | | ● | | ✅ 완료 |
+| 6-1 | ChromaDB 사전 구축 — 3개 앱 94개 UI 요소 seed (11-02 구글·카카오 48개 추가 → 142개) (다중 스크린샷) | | | ● | | ✅ 완료 |
 | 7 | 3단계 캐시 파이프라인 구현 (pHash → CLIP → Deep Track) | | | ● | | ✅ 완료 |
 | 8 | Deep Track (Gemini 2.5 Flash Vision) 추론 엔진 연동 | | | ● | | ✅ 완료 |
 | 9 | 가이드 UI (말풍선) 시스템 통합 (TTS 제거) | | | | ● | ✅ 완료 |
@@ -67,11 +67,14 @@ Claude는 코드 작성 전 현재 단계를 확인하고, 해당 단계 범위 
       └─ 캐시 미스 → CLIP 임베딩 생성 (512차원 벡터)
   ⑫  Stage 2 — CLIP: 카테고리 필터 코사인 ≥ 0.91(동일앱) / ≥ 0.95(크로스앱) → 반환 (~80ms, track: "fast")
       └─ Stage 1·2 모두 설명이 다른 후보와 점수가 너무 가까우면 미스 (모호성 거부)
-      └─ 캐시 미스 → Stage 3
+      └─ 캐시 미스 → Stage 2.5
+  ⑫-1 Stage 2.5 — 역할 판정: 버튼 글자(OCR 핵심어) 또는 CLIP 이웃 역할 투표 → 역할 표준 설명 (~150ms, track: "role")
+      └─ DB 저장 안 함 / 판정 보류 → Stage 3
   ⑬  Stage 3 — Gemini 2.5 Flash Vision: 전체 스크린샷 + 요소 이미지 + "{app_name} 앱 화면" 프롬프트
-      ├─ 성공 → ChromaDB 저장 (pHash·CLIP·description) + 인메모리 pHash 스토어 즉시 등록
+      ├─ JSON 구조화 출력으로 설명 + 역할(roles.py 30종 또는 other)을 함께 받음
+      ├─ 성공 → ChromaDB 저장 (pHash·CLIP·description·role) + 인메모리 pHash 스토어 즉시 등록
       └─ 3회 재시도 후 실패 → "정보를 찾는 중입니다" 반환, DB 저장 안 함
-  ⑭  최종 JSON 응답 { track, description, element_type, confidence, similarity, hamming, app_name, cross_app, fallback }
+  ⑭  최종 JSON 응답 { track, description, element_type, confidence, similarity, hamming, app_name, cross_app, fallback, role }
   ⑮  말풍선 UI 표시 (track 배지 + 설명 텍스트)
   ⑯  말풍선 닫기 → 크롭 초기화 → 다시 선택 가능 / 좌하단 X 버튼 → 오버레이 종료
 ```
@@ -235,17 +238,21 @@ ChromaDB collection: ui_elements   (경로: backend/chroma_data/)
 
 ### ✅ 6-1단계 — ChromaDB 사전 구축 (seed_db) (완료)
 
-**목표**: 서비스 시작 전 주요 3개 앱의 UI 요소를 미리 DB에 저장하여, 첫 쿼리부터 캐시 히트를 경험할 수 있도록 함.
+**목표**: 서비스 시작 전 주요 5개 앱의 UI 요소를 미리 DB에 저장하여, 첫 쿼리부터 캐시 히트를 경험할 수 있도록 함.
 
 **구현 파일**: `backend/db/seed_db.py` ✅
 
-**사전 구축 대상 (총 94개 UI 요소)**
+**사전 구축 대상 (총 142개 UI 요소, 그중 95개에 기능적 역할 지정)**
 
 | 앱 | 패키지 | 요소 수 | 주요 포함 항목 |
 |----|--------|---------|---------------|
 | 배달의민족 | `com.baemin.android` | 33개 | 헤더 아이콘 4종, 검색창, 탭 5종, 음식카테고리 10종, 편의점 5종, 하단 탭바 5종 등 |
 | 네이버지도 | `com.nhn.android.nmap` | 40개 | 홈(17) + 길찾기 입력(6) + 교통수단 탭(4) + 안내시작(2) + 장소상세 GS25(7) + 장소상세 경희대(4) |
 | 코레일 | `mobi.korail.Talk` | 21개 | 헤더 아이콘 3종, 승차권 입력 전체, 서비스 아이콘 4종, 하단 탭바 4종 등 |
+| 구글 지도 | `com.google.android.apps.maps` | 23개 | 홈(12: 검색·마이크·프로필·칩 4·레이어·길찾기·하단 탭 3) + 장소상세 경희대(11) — 2026-11-02 추가 |
+| 카카오맵 | `net.daum.android.map` | 25개 | 홈(16: 검색·마이크·길찾기·칩 3·로드뷰·레이어·현위치·바로가기·하단 탭 3) + 검색 결과(9) — 2026-11-02 추가 |
+
+구글·카카오 seed의 bbox는 `/detect`(conf 0.3) 탐지 박스를 그대로 썼습니다. 두 앱의 길찾기·검색 화면은 평가 전용이라 seed에 쓰지 않습니다.
 
 **seed_db.py 핵심 구조**
 
@@ -427,7 +434,8 @@ def analyze(
 
 **생성 설정**
 - `system_instruction`: "70대 어르신의 스마트폰 사용을 돕는 친절한 안내원… 항상 2문장 이내"
-- `temperature=0.2`, `max_output_tokens=300`
+- `temperature=0.2`, `max_output_tokens=1024` (내부 추론 토큰 약 170개가 한도에 포함되므로 여유를 둠)
+- `response_mime_type="application/json"` + 스키마 `{description, role}` — `analyze()`는 `DeepResult(description, role)` 반환, 목록 밖 역할은 `"other"`
 - few-shot 예시 2개(홈 버튼, 검색창)로 출력 형식 고정
 - 응답 검증: 길이 < 20 또는 끝 글자가 `.`/`요`/`다`가 아니면 잘린 응답으로 보고 재시도
 - 최대 3회 시도, 실패 간 3s → 6s 대기. 모두 실패하면 `None`
@@ -482,13 +490,14 @@ app_name    : 앱 표시 이름 (예: "네이버 지도")
 ```json
 { "track": "hash", "description": "처음 화면으로 돌아가는 버튼이에요.", "element_type": "icon", "confidence": 0.72, "similarity": null, "hamming": 2, "app_name": "배달의민족", "cross_app": false, "fallback": false }
 { "track": "fast", "description": "이 버튼은 우회전 경로를 안내해요.", "element_type": "icon", "confidence": 0.84, "similarity": 0.95, "hamming": null, "app_name": "카카오맵", "cross_app": true, "fallback": false }
-{ "track": "deep", "description": "이 버튼은 메시지를 전달하는 버튼이에요.", "element_type": "button", "confidence": 0.61, "similarity": null, "hamming": null, "app_name": "카카오톡", "cross_app": false, "fallback": false }
+{ "track": "role", "description": "고른 경로로 길 안내를 시작해요. 이동하는 동안 어느 쪽으로 가야 하는지 차례로 알려줘요.", "element_type": "text", "confidence": 0.65, "similarity": null, "hamming": null, "app_name": "카카오맵", "cross_app": false, "fallback": false, "role": "start_navigation" }
+{ "track": "deep", "description": "이 버튼은 메시지를 전달하는 버튼이에요.", "element_type": "button", "confidence": 0.61, "similarity": null, "hamming": null, "app_name": "카카오톡", "cross_app": false, "fallback": false, "role": "other" }
 { "track": "error", "description": "정보를 찾는 중입니다", "element_type": null, "confidence": null, "similarity": null, "hamming": null, "app_name": "네이버 지도" }
 ```
 
 | 필드 | 설명 |
 |------|------|
-| `track` | `"hash"` / `"fast"` / `"deep"` / `"error"` |
+| `track` | `"hash"` / `"fast"` / `"role"` / `"deep"` / `"error"` |
 | `description` | 노년층 친화적 2문장 이내 설명 |
 | `element_type` | OmniParser 탐지 결과 (`"icon"` / `"button"` / `"text"` / `"unknown"`) |
 | `confidence` | OmniParser YOLOv8 탐지 신뢰도 (0.0~1.0) |
@@ -496,7 +505,8 @@ app_name    : 앱 표시 이름 (예: "네이버 지도")
 | `hamming` | pHash 해밍 거리 — hash 트랙만 존재, 나머지 null |
 | `app_name` | 요청의 `app_name`, 없으면 `app_package` |
 | `cross_app` | 같은 카테고리의 다른 앱 항목에서 히트했는지 (hash/fast/deep 응답만) |
-| `fallback` | YOLO 후보가 없어 사용자 크롭을 그대로 썼는지 (hash/fast/deep 응답만) |
+| `fallback` | YOLO 후보가 없어 사용자 크롭을 그대로 썼는지 (hash/fast/role/deep 응답만) |
+| `role` | 기능적 역할 키 (`pipeline/roles.py`) — role·deep 트랙만 값이 있고 hash·fast는 null. role 트랙의 `similarity`는 이웃 투표 1위 유사도(글자 판정이면 null) |
 
 > `error` 응답에는 `cross_app`·`fallback`이 없습니다. 예외 내용은 응답에 넣지 않고 서버 로그(`bridgeui` 로거)에만 남깁니다.
 
@@ -536,7 +546,7 @@ app_name    : 앱 표시 이름 (예: "네이버 지도")
 - 설명 폰트 22sp, 고대비 흰 배경 + 짙은 텍스트 (#202124)
 - 화면 하단 1/3 고정 표시 (`Alignment(0, 0.72)`)
 - 닫기 버튼 터치 영역 56dp
-- track 배지: hash/fast=초록 "빠른 응답" (#34A853), deep=파랑 "AI 분석" (#1A73E8), error=회색 "오류" (#9AA0A6)
+- track 배지: hash/fast=초록 "빠른 응답" (#34A853), role=보라 "기능 안내" (#8430CE), deep=파랑 "AI 분석" (#1A73E8), error=회색 "오류" (#9AA0A6)
 
 **TTS 제거 이유**: 노년층 사용성 테스트 피드백 반영 — 말풍선 텍스트 직접 읽기 방식으로 전환
 
@@ -555,6 +565,17 @@ app_name    : 앱 표시 이름 (예: "네이버 지도")
 - (11-02) Stage 1/2 모호성 거부 + `SIMILARITY_THRESHOLD` 0.91 → 틀린 캐시 히트 131개 → 20개
 - (11-02) 어긋난 seed bbox 71개 재지정 (648px 스크린샷 3장), 잘못된 캐시 항목 정리 도구 `tools/clean_db.py`
 - (11-02) 재분석 대상 수정, 엔드포인트 스레드풀 실행, 오류 원문 비노출
+- (11-02) 역할 기반 매칭 1·2단계: 역할 분류표 `pipeline/roles.py`(30종), 평가셋에 구글·카카오 화면 4장 추가(박스 501개, 역할 라벨), 역할 분류기 `pipeline/role_classifier.py`
+  - 글자(easyocr 핵심어) → 없으면 CLIP 이웃의 역할 투표(동일앱 ≥ 0.85 / 크로스앱 ≥ 0.92, 역할 간 차이 ≥ 0.03) → 화면 위치 보정
+  - `eval_cache.py rolerun` 결과 정밀도 네이버 96%(53/55)·구글 100%(5/5)·카카오 87%(13/15), 재현율 53/111·5/29·13/32
+  - CLIP 제로샷("a microphone icon" 등 문장 비교)은 정밀도가 나오지 않아 쓰지 않음
+- (11-02) 역할 기반 매칭 3단계: `/capture`에 Stage 2.5(track `"role"`) 연결, Gemini가 역할도 반환해 저장, 말풍선 "기능 안내" 배지
+  - `eval_cache.py run`이 Stage 1 → 2 → 2.5 전체를 채점 (Stage 2.5는 roles.json 기준)
+  - 맞는 응답: 네이버 29 → 64, 구글 0 → 5, 카카오 1 → 13 / 틀린 응답 비율: 네이버 40.8% → 25.6%
+- (11-02) 역할 기반 매칭 4단계: 구글 지도 23개·카카오맵 25개 seed 추가 (총 142개, 역할 지정 95개)
+  - 맞는 응답: 네이버 67, 구글 9, 카카오 13 / 틀린 응답 비율: 네이버 20.2%, 구글 25.0%, 카카오 35.0%
+  - 역할 분류기 재현율: 네이버 61/111, 구글 10/29, 카카오 14/32
+  - 한계: 기록 삭제용 작은 X가 다른 앱의 닫기 X와 CLIP 0.97 이상으로 같아 "닫기"로 판정됨 (그림이 같고 뜻은 맥락에 따라 다름)
 
 **예정**
 - Stage별 히트율·응답시간 실측 (JSON Lines 구조화 로그, 실기기 필요)
@@ -603,17 +624,20 @@ printf 'GEMINI_API_KEY=AIza...\nANTHROPIC_API_KEY=sk-ant-...\n' > .env
 
 # 최초 1회: ChromaDB 사전 구축 (스크린샷을 db/screenshots/ 에 배치 후 실행)
 venv/bin/python3 db/seed_db.py --dry_run   # 목록 미리 확인 (저장 없음)
-venv/bin/python3 db/seed_db.py             # 94개 요소 CLIP 임베딩 + pHash 저장
+venv/bin/python3 db/seed_db.py             # 142개 요소 CLIP 임베딩 + pHash 저장
 
 # 서버 실행 (가상환경 직접 경로 사용 — PATH 문제 우회)
 venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
-curl http://localhost:8000/db/count        # 94 이상이면 정상 (Deep Track 저장분 포함)
+curl http://localhost:8000/db/count        # 142 이상이면 정상 (Deep Track 저장분 포함)
 
 # 캐시 정확도 평가 (임계값·마진·seed를 바꾼 뒤 반드시 실행)
 venv/bin/python3 tests/eval_cache.py build      # 최초 1회: 평가 박스 크롭 생성
 venv/bin/python3 tests/eval_cache.py run        # 맞은/틀린 히트·미스 집계
 venv/bin/python3 tests/eval_cache.py sheet      # 라벨 없는 히트가 생기면 시트로 판정
 venv/bin/python3 tests/eval_cache.py label "0:1,1:0"
+venv/bin/python3 tests/eval_cache.py rolesheet  # 역할 라벨 없는 박스를 시트로
+venv/bin/python3 tests/eval_cache.py rolelabel "0:search,1:other"
+venv/bin/python3 tests/eval_cache.py rolerun    # 역할 분류기 정밀도·재현율 (분류기 임계값을 바꾼 뒤 실행)
 
 # 잘못된 설명(중계 메시지·잘린 문장) 캐시 정리 — 서버 종료 후 실행
 venv/bin/python3 tools/clean_db.py             # 미리보기
@@ -663,7 +687,7 @@ Android 설정 → 앱 → 특별한 앱 접근 권한 → 사용 정보 접근 
 | 앱 context | Android `UsageStatsManager` (직전 포그라운드 앱 패키지명 수집) ✅ |
 | 크로스앱 캐시 | `_APP_CATEGORIES` 4개 그룹 + 이중 임계값 ✅ |
 | Stage 1 캐시 | pHash (`imagehash>=4.3.0`) — 인메모리 스토어, 해밍 ≤ 8 / ≤ 4, <1ms ✅ |
-| DB 사전 구축 | `seed_db.py` — 3개 앱 94개 UI 요소 (다중 스크린샷, YOLO 크롭) ✅ |
+| DB 사전 구축 | `seed_db.py` — 5개 앱 142개 UI 요소 (다중 스크린샷, YOLO 크롭, 역할 라벨) ✅ |
 | 환경 변수 | `python-dotenv` — `backend/.env` 자동 로드 (1순위 `GEMINI_API_KEY`, 2순위 `ANTHROPIC_API_KEY`) ✅ |
 | 캡처 | Android MediaProjection API + ServiceConnection (Android 16 대응) ✅ |
 | 탐지 시각화 | `tools/visualize_detections.py` — YOLO bbox 시각화 및 seed bbox 탐색 ✅ |
@@ -698,17 +722,19 @@ bridge-ui/
 ├── backend/
 │   ├── db/
 │   │   ├── chroma_store.py                  # ChromaDB 싱글턴 (경로: backend/chroma_data/)
-│   │   ├── seed_db.py                       # 3개 앱 94개 UI 요소 사전 구축 (다중 스크린샷)
+│   │   ├── seed_db.py                       # 5개 앱 142개 UI 요소 사전 구축 (다중 스크린샷, 역할 라벨)
 │   │   └── screenshots/                     # seed용 스크린샷 (gitignore)
 │   ├── pipeline/
 │   │   ├── embedder.py                      # CLIP 임베딩 (512차원, warmup 포함)
 │   │   ├── ui_detector.py                   # OmniParser YOLOv8 Phase 3 + 구버전 패딩 폴백
 │   │   ├── hash_track.py                    # Stage 1: pHash 인메모리 스토어 + 크로스앱 임계값
 │   │   ├── fast_track.py                    # Stage 2: CLIP + 카테고리 $in 필터 + 크로스앱 임계값
-│   │   └── deep_track.py                    # Stage 3: Gemini 2.5 Flash Vision 설명 생성
+│   │   ├── deep_track.py                    # Stage 3: Gemini 2.5 Flash Vision 설명 생성
+│   │   ├── roles.py                         # 기능적 역할 분류표 30종 + 표준 설명 (역할 기반 매칭용)
+│   │   └── role_classifier.py               # 역할 판정: easyocr 핵심어 → CLIP 이웃 역할 투표 → 위치 보정
 │   ├── tests/
 │   │   ├── eval_cache.py                    # 캐시 정확도 평가 (build / sheet / label / run)
-│   │   ├── eval/                            # boxes.json·labels.json (crops/·sheets/는 gitignore)
+│   │   ├── eval/                            # boxes.json·labels.json·roles.json (crops/·sheets/는 gitignore)
 │   │   ├── test_detector.py                 # OmniParser conf 분포·임계값 진단
 │   │   ├── test_stage2.py                   # Stage 2 CLIP 유사도 히트 검증
 │   │   ├── test_cache_pipeline.py           # 3단계 캐시 파이프라인 통합 테스트
@@ -741,7 +767,8 @@ bridge-ui/
 
 ### Backend (FastAPI)
 - Vector DB는 **ChromaDB** 사용. 컬렉션은 `get_collection()` 싱글턴으로만 접근할 것.
-- `/capture` 엔드포인트는 항상 `track`, `description`, `element_type`, `confidence`, `similarity`, `hamming`, `app_name` 필드를 포함한 JSON을 반환할 것. 정상 응답(hash/fast/deep)에는 `cross_app`, `fallback`도 포함할 것.
+- `/capture` 엔드포인트는 항상 `track`, `description`, `element_type`, `confidence`, `similarity`, `hamming`, `app_name` 필드를 포함한 JSON을 반환할 것. 정상 응답(hash/fast/role/deep)에는 `cross_app`, `fallback`, `role`도 포함할 것.
+- Stage 2.5(역할 판정) 결과는 DB에 저장하지 말 것. 판정 중 예외가 나면 로그만 남기고 Stage 3로 넘길 것.
 - `/detect` 엔드포인트는 YOLO 탐지만 수행하고 `elements` 배열과 `image_width`, `image_height`를 반환할 것 (pHash/CLIP/Gemini 호출 없음).
 - `/capture` 수신 시 `full_image` + 유효한 `crop_x1/y1/x2/y2`가 있으면 `detect_from_full_screenshot()` 사용, 아니면 `file`로 `detect_ui_element()` 구버전 폴백 사용.
 - `detect_from_full_screenshot()`이 반환한 `element_image_bytes`를 pHash·CLIP·Gemini Vision 모두에 사용할 것 (사용자 크롭이 아님).
@@ -808,7 +835,7 @@ def analyze_ui_element(image: bytes, metadata: dict) -> dict:
 코드 생성 전 아래 항목을 확인하세요.
 
 - [ ] 현재 로드맵 단계(섹션 2)에 해당하는 범위의 구현인가?
-- [ ] 3단계 캐시 파이프라인(Stage 1 pHash → Stage 2 CLIP → Stage 3 Gemini Deep Track) 순서를 따르는가?
+- [ ] 캐시 파이프라인(Stage 1 pHash → Stage 2 CLIP → Stage 2.5 역할 → Stage 3 Gemini Deep Track) 순서를 따르는가?
 - [ ] UI 컴포넌트와 비즈니스 로직이 분리되어 있는가?
 - [ ] 모든 함수/클래스에 Docstring이 있는가?
 - [ ] 에러 및 지연 상황에 사용자 친화적 중계 메시지가 있는가?

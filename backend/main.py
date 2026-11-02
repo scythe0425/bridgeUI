@@ -1,4 +1,5 @@
 import base64
+import io
 import logging
 import uuid
 from datetime import datetime
@@ -10,6 +11,7 @@ load_dotenv()  # backend/.env 에서 API 키 로드 (1순위 GEMINI_API_KEY, 2�
 
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import HTMLResponse
+from PIL import Image
 
 from db.chroma_store import get_collection
 from pipeline.embedder import embed_image
@@ -24,6 +26,8 @@ from pipeline.hash_track import (
     to_str as phash_to_str,
 )
 from pipeline.fast_track import search as fast_search
+from pipeline.role_classifier import classify as role_classify
+from pipeline.role_classifier import warmup as warmup_ocr
 from pipeline.deep_track import FALLBACK_MESSAGE, analyze as deep_analyze, is_valid_description
 
 logger = logging.getLogger("bridgeui")
@@ -92,7 +96,7 @@ def _error_response(app_name: str, element_type: str | None = None,
 
 def _save_new_entry(image_bytes: bytes, vector: list[float] | None, description: str,
                     element_type: str, confidence: float | None, description_hint: str,
-                    app_package: str, app_name: str, filename: str) -> str:
+                    app_package: str, app_name: str, filename: str, role: str) -> str:
     """Deep Track 결과를 ChromaDB와 인메모리 pHash 스토어에 함께 저장합니다.
 
     Args:
@@ -105,6 +109,7 @@ def _save_new_entry(image_bytes: bytes, vector: list[float] | None, description:
         app_package: 앱 패키지명 (캐시 검색 필터 기준이므로 표시 이름을 넣으면 안 됨).
         app_name: 앱 표시 이름.
         filename: 메타데이터용 파일명.
+        role: Gemini가 고른 기능적 역할 (role track 이웃 투표에 쓰임).
 
     Returns:
         새로 만든 문서 ID.
@@ -125,6 +130,7 @@ def _save_new_entry(image_bytes: bytes, vector: list[float] | None, description:
             "app_package": app_package,
             "app_name": app_name,
             "phash": phash_to_str(ph),
+            "role": role,
         }],
     )
     # 인메모리 pHash 스토어에도 즉시 등록 (다음 요청부터 Stage 1 히트 가능)
@@ -134,10 +140,11 @@ def _save_new_entry(image_bytes: bytes, vector: list[float] | None, description:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """서버 시작 시 ChromaDB 컬렉션, CLIP, YOLOv8, pHash 스토어를 미리 로드합니다."""
+    """서버 시작 시 ChromaDB 컬렉션, CLIP, YOLOv8, OCR, pHash 스토어를 미리 로드합니다."""
     collection = get_collection()
     warmup_clip()
     warmup_yolo()
+    warmup_ocr()
     loaded = phash_load(collection)
     print(f"[startup] pHash 스토어: {loaded}개 로드 / ChromaDB: {collection.count()}개")
     yield
@@ -164,8 +171,10 @@ def receive_capture(
     처리 순서:
       STAGE 1 — pHash: 해밍 거리 ≤ 8(동일앱) / ≤ 4(크로스앱) → <1ms, track: "hash"
       STAGE 2 — CLIP 유사도: 코사인 ≥ 0.91(동일앱) / ≥ 0.95(크로스앱) → ~80ms, track: "fast"
-      STAGE 3 — Gemini Vision (Deep Track): 신규 설명 생성 → 1~3s, track: "deep"
+      STAGE 2.5 — 역할 판정: 버튼 글자(OCR) 또는 CLIP 이웃의 역할 투표 → 표준 설명, ~150ms, track: "role"
+      STAGE 3 — Gemini Vision (Deep Track): 신규 설명 + 역할 생성 → 3~4s, track: "deep"
     Stage 1/2는 설명이 다른 후보와 점수가 너무 가까우면 미스로 처리합니다.
+    Stage 2.5 결과는 DB에 저장하지 않습니다 (잘못 판정한 역할이 캐시로 굳는 것을 막기 위해).
 
     신규 방식: full_image(전체 스크린샷) + crop 좌표 → YOLO 전체 탐지 후 크롭 내 최적 요소 선택.
     구버전 폴백: file(크롭 이미지)만 전송 → 캔버스 패딩 후 탐지.
@@ -179,7 +188,8 @@ def receive_capture(
 
     Returns:
         { track, description, element_type, confidence, similarity, hamming, app_name,
-          cross_app, fallback } — 오류 시 track "error"와 중계 메시지.
+          cross_app, fallback, role } — 오류 시 track "error"와 중계 메시지.
+        role은 role·deep 트랙에서만 값이 있고 hash·fast는 None입니다.
     """
     global _latest_image_b64, _latest_image_bytes, _latest_full_image_bytes, _latest_doc_id
     global _latest_match, _latest_app_package, _latest_app_name
@@ -240,6 +250,7 @@ def receive_capture(
                 "app_name": display_name,
                 "cross_app": hash_result.get("cross_app", False),
                 "fallback": fallback,
+                "role": None,
             }
             _latest_response = response
             return response
@@ -261,12 +272,39 @@ def receive_capture(
                 "app_name": display_name,
                 "cross_app": fast_result.get("cross_app", False),
                 "fallback": fallback,
+                "role": None,
+            }
+            _latest_response = response
+            return response
+
+        # STAGE 2.5: 역할 판정 — 실패해도 Stage 3으로 넘어가도록 오류를 여기서 막습니다.
+        role_result = None
+        try:
+            role_result = role_classify(
+                data, vector, get_collection(), category_packages, own_package=app_package,
+                box=(crop_x1, crop_y1, crop_x2, crop_y2) if use_full else None,
+                screen=Image.open(io.BytesIO(full_data)).size if use_full else None,
+            )
+        except Exception:
+            logger.exception("[/capture] 역할 판정 실패 — Stage 3으로 넘어갑니다")
+        if role_result:
+            response = {
+                "track": "role",
+                "description": role_result["description"],
+                "element_type": element_type,
+                "confidence": confidence,
+                "similarity": role_result["score"],
+                "hamming": None,
+                "app_name": display_name,
+                "cross_app": role_result["cross_app"],
+                "fallback": fallback,
+                "role": role_result["role"],
             }
             _latest_response = response
             return response
 
         # STAGE 3: Deep Track — 전체 스크린샷을 함께 전달하여 화면 맥락 기반 설명 생성
-        description = deep_analyze(
+        deep = deep_analyze(
             data,
             element_type=element_type,
             app_package=app_package,
@@ -275,19 +313,19 @@ def receive_capture(
         )
 
         # 실패·중계 메시지·잘린 응답은 저장하지 않고 중계 메시지만 반환
-        if not is_valid_description(description):
+        if deep is None or not is_valid_description(deep.description):
             _latest_response = _error_response(display_name, element_type, confidence)
             return _latest_response
 
         _latest_doc_id = _save_new_entry(
-            data, vector, description, element_type, confidence,
+            data, vector, deep.description, element_type, confidence,
             detection.get("description_hint", ""), app_package, app_name,
-            (file.filename if file else None) or "capture.png",
+            (file.filename if file else None) or "capture.png", deep.role,
         )
 
         response = {
             "track": "deep",
-            "description": description,
+            "description": deep.description,
             "element_type": element_type,
             "confidence": confidence,
             "similarity": None,
@@ -295,6 +333,7 @@ def receive_capture(
             "app_name": display_name,
             "cross_app": False,
             "fallback": fallback,
+            "role": deep.role,
         }
         _latest_response = response
         return response
@@ -353,7 +392,7 @@ def reanalyze() -> dict:
     element_type = ((_latest_detection or {}).get("element_type") or "unknown")
 
     # Stage 3 강제 실행 (최대 3회 재시도 포함, 전체 스크린샷 맥락 포함)
-    description = deep_analyze(
+    deep = deep_analyze(
         _latest_image_bytes,
         element_type=element_type,
         app_package=_latest_app_package,
@@ -361,8 +400,9 @@ def reanalyze() -> dict:
         full_image_bytes=_latest_full_image_bytes,
     )
 
-    if not is_valid_description(description):
+    if deep is None or not is_valid_description(deep.description):
         return {"ok": False, "error": "Gemini 분석 실패 — 잠시 후 다시 시도하세요."}
+    description = deep.description
 
     target_id = _latest_doc_id
     if target_id is None and _latest_match and _latest_match["track"] == "hash" \
@@ -373,7 +413,8 @@ def reanalyze() -> dict:
         if target_id:
             collection = get_collection()
             meta = collection.get(ids=[target_id], include=["metadatas"])["metadatas"][0]
-            collection.update(ids=[target_id], metadatas=[{**meta, "description": description}])
+            collection.update(ids=[target_id],
+                              metadatas=[{**meta, "description": description, "role": deep.role}])
             phash_register(target_id, phash_compute(_latest_image_bytes), description,
                            meta.get("element_type", element_type), meta.get("app_package", ""))
             action = "updated"
@@ -381,7 +422,7 @@ def reanalyze() -> dict:
             target_id = _save_new_entry(
                 _latest_image_bytes, None, description, element_type,
                 float((_latest_detection or {}).get("confidence") or 0),
-                "", _latest_app_package, _latest_app_name, "reanalyzed.png",
+                "", _latest_app_package, _latest_app_name, "reanalyzed.png", deep.role,
             )
             _latest_doc_id = target_id
             action = "added"
@@ -393,6 +434,7 @@ def reanalyze() -> dict:
     if _latest_response:
         _latest_response["description"] = description
         _latest_response["track"] = "deep"
+        _latest_response["role"] = deep.role
 
     return {"ok": True, "description": description, "doc_id": target_id, "action": action}
 
@@ -429,7 +471,8 @@ async def viewer() -> str:
         app = _latest_response.get("app_name", "")
         sim = _latest_response.get("similarity")
 
-        track_color = {"hash": "#34A853", "fast": "#34A853", "deep": "#1A73E8", "error": "#EA4335"}.get(track, "#9E9E9E")
+        track_color = {"hash": "#34A853", "fast": "#34A853", "role": "#8430CE",
+                       "deep": "#1A73E8", "error": "#EA4335"}.get(track, "#9E9E9E")
         badge_color = {"icon": "#1A73E8", "button": "#34A853", "text": "#FBBC04"}.get(el_type, "#9E9E9E")
         sim_text = f" | 유사도 {sim:.0%}" if sim is not None else ""
 
