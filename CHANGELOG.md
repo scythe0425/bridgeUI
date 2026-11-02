@@ -21,6 +21,17 @@
 
 **미진행**: 직전 앱 감지·캡처 대상·캡처 해상도 점검은 실기기 연결이 필요해 보류
 
+### Step 10 — 역할 기반 매칭 (Stage 2.5)
+
+| 커밋 | 변경 내용 |
+|------|-----------|
+| `6d67614` | `pipeline/roles.py` 역할 분류표 30종 + 표준 설명, seed `UIElement.role`, 평가셋에 구글·카카오 화면 4장 추가(박스 501개) + 역할 라벨 |
+| `f8a0973` | `pipeline/role_classifier.py` — easyocr 핵심어 → CLIP 이웃 역할 투표 → 위치 보정, `eval_cache.py rolerun` |
+| `7973cb4` | `/capture` Stage 2.5(track `"role"`), Gemini JSON 출력으로 설명 + 역할 반환·저장, 말풍선 "기능 안내" 배지, `eval_cache.py run` 전체 흐름 채점 |
+| `2b3cea4` | 구글 지도 23개·카카오맵 25개 seed 추가 (총 142개), `run_full_test.py` 앱 목록을 `APP_CONFIG`에서 읽도록 수정 |
+
+**비교 실험 (501박스)**: 맞는 응답 30 → 82(역할 판정) → 89(+구글·카카오 seed), 틀린 응답 비율 42.3% → 24.1% → 23.3%, Gemini 호출 449 → 393 → 385 (상세는 `REPORT.md` §3.7)
+
 ---
 
 ## 2026-06-24
