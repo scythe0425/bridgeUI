@@ -64,7 +64,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_location",
         "배달의민족",
-        (15, 85, 250, 170),
+        (29, 111, 255, 213),
         "button",
         "우리집▼ 위치 버튼",
         "배달 받을 주소를 바꿀 수 있어요. "
@@ -73,7 +73,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_coupon",
         "배달의민족",
-        (830, 85, 925, 170),
+        (698, 119, 805, 225),
         "icon",
         "쿠폰/할인 아이콘",
         "사용할 수 있는 할인 쿠폰을 확인할 수 있어요. "
@@ -82,7 +82,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_notification",
         "배달의민족",
-        (925, 85, 1010, 170),
+        (819, 119, 923, 223),
         "icon",
         "알림 아이콘",
         "주문 현황이나 새로운 소식을 확인할 수 있어요. "
@@ -91,7 +91,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_cart",
         "배달의민족",
-        (1010, 85, 1070, 170),
+        (936, 121, 1043, 220),
         "icon",
         "장바구니 아이콘",
         "담아둔 음식을 확인하고 주문할 수 있어요. "
@@ -102,7 +102,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_search",
         "배달의민족",
-        (20, 185, 1060, 265),
+        (35, 248, 1042, 392),
         "button",
         "검색창",
         "먹고 싶은 음식이나 가게 이름을 검색할 수 있어요. "
@@ -113,7 +113,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_banner_more",
         "배달의민족",
-        (30, 425, 320, 468),
+        (50, 598, 447, 682),
         "button",
         "다른 브랜드도 있어요 > 버튼",
         "더 많은 브랜드의 할인 쿠폰을 볼 수 있어요. "
@@ -124,7 +124,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_tab_delivery",
         "배달의민족",
-        (5, 468, 195, 558),
+        (32, 775, 248, 882),
         "tab",
         "음식배달 탭",
         "집으로 음식을 배달시킬 수 있는 화면이에요. "
@@ -133,7 +133,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_tab_pickup",
         "배달의민족",
-        (200, 468, 295, 558),
+        (252, 781, 383, 871),
         "tab",
         "픽업 탭",
         "직접 가게에 가서 음식을 받아오는 포장 주문을 할 수 있어요. "
@@ -142,7 +142,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_tab_shopping",
         "배달의민족",
-        (300, 468, 470, 558),
+        (384, 778, 652, 873),
         "tab",
         "장보기·일반 탭",
         "마트나 편의점 상품을 집에서 주문할 수 있어요. "
@@ -151,7 +151,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_tab_family",
         "배달의민족",
-        (475, 468, 595, 558),
+        (667, 779, 875, 871),
         "tab",
         "가정의달 탭",
         "5월 가정의 달 기념 특별 이벤트와 할인을 볼 수 있어요.",
@@ -159,7 +159,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_tab_gift",
         "배달의민족",
-        (600, 468, 740, 558),
+        (888, 762, 1079, 896),
         "tab",
         "선물하기 탭",
         "다른 사람에게 선물을 보낼 수 있어요. "
@@ -170,7 +170,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_cat_sale",
         "배달의민족",
-        (15, 578, 225, 758),
+        (32, 898, 240, 1195),
         "icon",
         "배지직 할인 카테고리",
         "최대 7천원 할인을 받을 수 있는 가게들이 모여 있어요. "
@@ -179,7 +179,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_cat_korean",
         "배달의민족",
-        (230, 578, 440, 758),
+        (240, 958, 430, 1195),
         "icon",
         "한식 카테고리",
         "한국 음식을 배달시킬 수 있어요. "
@@ -188,7 +188,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_cat_chinese",
         "배달의민족",
-        (445, 578, 655, 758),
+        (443, 958, 635, 1195),
         "icon",
         "중식 카테고리",
         "짜장면, 짬뽕 같은 중국 음식을 배달시킬 수 있어요. "
@@ -197,7 +197,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_cat_fastfood",
         "배달의민족",
-        (660, 578, 870, 758),
+        (640, 958, 833, 1195),
         "icon",
         "패스트푸드 카테고리",
         "햄버거, 피자 같은 패스트푸드를 배달시킬 수 있어요. "
@@ -206,7 +206,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_cat_snack",
         "배달의민족",
-        (875, 578, 1065, 758),
+        (847, 958, 1040, 1192),
         "icon",
         "분식 카테고리",
         "떡볶이, 순대, 튀김 같은 분식을 배달시킬 수 있어요. "
@@ -217,7 +217,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_cat_chicken",
         "배달의민족",
-        (15, 765, 225, 950),
+        (40, 1224, 229, 1462),
         "icon",
         "치킨 카테고리",
         "치킨을 배달시킬 수 있어요. "
@@ -226,7 +226,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_cat_cafe",
         "배달의민족",
-        (230, 765, 440, 950),
+        (239, 1222, 439, 1457),
         "icon",
         "카페·디저트 카테고리",
         "커피, 케이크, 디저트를 배달시킬 수 있어요. "
@@ -235,7 +235,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_cat_bowl",
         "배달의민족",
-        (445, 765, 655, 950),
+        (448, 1223, 629, 1455),
         "icon",
         "한그릇 카테고리",
         "국밥, 순대국 등 든든하고 따뜻한 한 그릇을 배달시킬 수 있어요. "
@@ -244,7 +244,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_cat_pickupevent",
         "배달의민족",
-        (660, 765, 870, 950),
+        (635, 1197, 833, 1458),
         "icon",
         "픽업이벤트 카테고리",
         "직접 가져갈 때 특별 할인을 받을 수 있는 이벤트에요. "
@@ -253,7 +253,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_cat_meetpay",
         "배달의민족",
-        (875, 765, 1065, 950),
+        (842, 1222, 1048, 1457),
         "icon",
         "만나서결제 카테고리",
         "음식을 받을 때 직접 현금이나 카드로 결제할 수 있어요. "
@@ -264,7 +264,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_more_categories",
         "배달의민족",
-        (320, 963, 720, 1003),
+        (687, 1528, 738, 1592),
         "button",
         "음식배달에서 더보기 > 버튼",
         "더 많은 음식 카테고리를 볼 수 있어요. "
@@ -275,7 +275,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_conv_allsale",
         "배달의민족",
-        (10, 1025, 215, 1205),
+        (25, 1668, 242, 1930),
         "icon",
         "편의점 세일",
         "편의점 할인 상품 목록 화면으로 이동해요. "
@@ -284,7 +284,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_conv_cu",
         "배달의민족",
-        (220, 1025, 425, 1205),
+        (247, 1648, 443, 1930),
         "icon",
         "CU 편의점",
         "CU 편의점 상품을 집에서 주문할 수 있어요. "
@@ -293,7 +293,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_conv_gs25",
         "배달의민족",
-        (430, 1025, 635, 1205),
+        (450, 1648, 652, 1928),
         "icon",
         "GS25 편의점",
         "GS25 편의점 상품을 집에서 주문할 수 있어요. "
@@ -302,7 +302,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_conv_emart",
         "배달의민족",
-        (640, 1025, 845, 1205),
+        (657, 1649, 863, 1927),
         "icon",
         "이마트",
         "이마트 상품을 집에서 주문할 수 있어요. "
@@ -311,7 +311,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_conv_emartsuper",
         "배달의민족",
-        (850, 1025, 1065, 1205),
+        (867, 1651, 1070, 1925),
         "icon",
         "이마트슈퍼",
         "이마트슈퍼 상품을 무료로 배달받을 수 있어요. "
@@ -322,7 +322,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_popup_close",
         "배달의민족",
-        (1018, 1218, 1070, 1268),
+        (923, 1998, 995, 2070),
         "button",
         "팝업 닫기 X 버튼",
         "하단에 떠있는 할인 알림창을 닫는 버튼이에요. "
@@ -333,7 +333,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_nav_home",
         "배달의민족",
-        (0, 2188, 216, 2340),
+        (28, 2138, 183, 2320),
         "tab",
         "홈 탭",
         "처음 화면으로 돌아가는 버튼이에요. "
@@ -342,7 +342,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_nav_shopping",
         "배달의민족",
-        (216, 2188, 432, 2340),
+        (230, 2148, 417, 2292),
         "tab",
         "장보기·일반 탭 (하단)",
         "마트나 편의점 상품을 구매할 수 있는 화면으로 이동해요.",
@@ -350,7 +350,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_nav_wish",
         "배달의민족",
-        (432, 2188, 648, 2340),
+        (442, 2134, 633, 2288),
         "tab",
         "쏠 탭",
         "마음에 들어 저장해 둔 가게나 음식을 볼 수 있어요. "
@@ -359,7 +359,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_nav_orders",
         "배달의민족",
-        (648, 2188, 864, 2340),
+        (672, 2140, 842, 2312),
         "tab",
         "주문내역 탭",
         "지금까지 주문한 음식 기록을 볼 수 있어요. "
@@ -368,7 +368,7 @@ BAEMIN_ELEMENTS: list[UIElement] = [
     UIElement(
         "baemin_nav_my",
         "배달의민족",
-        (864, 2188, 1080, 2340),
+        (873, 2142, 1065, 2317),
         "tab",
         "마이배민 탭",
         "내 계정 정보, 포인트, 쿠폰을 관리할 수 있는 내 페이지에요.",
@@ -384,7 +384,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
     UIElement(
         "navermap_search",
         "네이버지도",
-        (20, 80, 825, 168),
+        (40, 104, 553, 258),
         "button",
         "검색창 + 마이크",
         "가고 싶은 장소나 주소를 입력해서 찾을 수 있어요. "
@@ -393,7 +393,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
     UIElement(
         "navermap_profile",
         "네이버지도",
-        (828, 78, 938, 170),
+        (731, 119, 843, 252),
         "icon",
         "프로필 아이콘",
         "내 계정 정보와 저장한 장소를 확인할 수 있어요. "
@@ -402,7 +402,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
     UIElement(
         "navermap_directions",
         "네이버지도",
-        (942, 72, 1072, 172),
+        (879, 101, 1067, 285),
         "button",
         "길찾기 → 파란 버튼",
         "원하는 목적지까지 길 안내를 받을 수 있어요. "
@@ -413,7 +413,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
     UIElement(
         "navermap_chip_restaurant",
         "네이버지도",
-        (12, 178, 178, 242),
+        (23, 283, 300, 432),
         "button",
         "음식점 카테고리 칩",
         "주변 음식점을 지도에서 찾을 수 있어요. "
@@ -422,7 +422,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
     UIElement(
         "navermap_chip_cafe",
         "네이버지도",
-        (185, 178, 314, 242),
+        (308, 286, 542, 400),
         "button",
         "카페 카테고리 칩",
         "주변 카페를 지도에서 찾을 수 있어요. "
@@ -431,7 +431,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
     UIElement(
         "navermap_chip_popup",
         "네이버지도",
-        (320, 178, 492, 242),
+        (550, 288, 883, 400),
         "button",
         "팝업스토어 카테고리 칩",
         "주변 팝업스토어 매장을 지도에서 찾을 수 있어요. "
@@ -440,7 +440,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
     UIElement(
         "navermap_chip_takeout",
         "네이버지도",
-        (498, 178, 590, 242),
+        (917, 290, 1080, 383),
         "button",
         "N포장 카테고리 칩",
         "포장 주문이 가능한 가게를 지도에서 찾을 수 있어요. "
@@ -451,7 +451,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
     UIElement(
         "navermap_ad_close",
         "네이버지도",
-        (292, 300, 362, 372),
+        (29, 438, 243, 521),
         "button",
         "광고 닫기 X 버튼",
         "지도 위에 표시된 광고 창을 닫는 버튼이에요. "
@@ -462,7 +462,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
     UIElement(
         "navermap_layer",
         "네이버지도",
-        (938, 315, 1062, 428),
+        (912, 439, 1048, 575),
         "button",
         "지도 레이어 버튼",
         "지도 종류를 바꿀 수 있어요. "
@@ -471,7 +471,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
     UIElement(
         "navermap_bookmark",
         "네이버지도",
-        (938, 435, 1062, 548),
+        (904, 586, 1053, 728),
         "button",
         "즐겨찾기 ★ 버튼",
         "자주 가는 장소를 즐겨찾기에 저장할 수 있어요. "
@@ -480,7 +480,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
     UIElement(
         "navermap_savelocation",
         "네이버지도",
-        (938, 555, 1062, 668),
+        (912, 736, 1048, 875),
         "button",
         "위치 저장 📌 버튼",
         "현재 지도에서 보고 있는 위치를 내 장소로 저장할 수 있어요. "
@@ -489,7 +489,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
     UIElement(
         "navermap_current_location",
         "네이버지도",
-        (938, 1042, 1062, 1158),
+        (911, 1689, 1048, 1830),
         "button",
         "현위치 ◎ 버튼",
         "지금 내가 있는 위치로 지도를 이동해요. "
@@ -500,7 +500,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
     UIElement(
         "navermap_nav_discover",
         "네이버지도",
-        (0, 2188, 216, 2340),
+        (42, 2118, 163, 2275),
         "tab",
         "발견 탭",
         "주변 맛집, 카페, 명소 등을 추천받을 볼 수 있는 화면이에요. "
@@ -509,7 +509,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
     UIElement(
         "navermap_nav_reserve",
         "네이버지도",
-        (216, 2188, 432, 2340),
+        (258, 2121, 385, 2273),
         "tab",
         "예약 탭",
         "음식점이나 서비스를 미리 예약할 수 있는 화면이에요. "
@@ -518,7 +518,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
     UIElement(
         "navermap_nav_transit",
         "네이버지도",
-        (432, 2188, 648, 2340),
+        (442, 2118, 628, 2278),
         "tab",
         "대중교통 탭",
         "버스나 지하철로 가는 방법을 찾을 수 있어요. "
@@ -527,7 +527,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
     UIElement(
         "navermap_nav_navi",
         "네이버지도",
-        (648, 2188, 864, 2340),
+        (648, 2128, 872, 2278),
         "tab",
         "내비게이션 탭",
         "이동할 때 길 안내를 받을 수 있어요. "
@@ -536,7 +536,7 @@ NAVER_MAP_ELEMENTS: list[UIElement] = [
     UIElement(
         "navermap_nav_saved",
         "네이버지도",
-        (864, 2188, 1080, 2340),
+        (898, 2118, 1033, 2277),
         "tab",
         "저장 탭",
         "내가 저장해 둔 장소 목록을 볼 수 있어요. "
@@ -803,7 +803,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
     UIElement(
         "korail_transit_card",
         "코레일",
-        (20, 80, 180, 165),
+        (25, 117, 162, 192),
         "icon",
         "교통카드 아이콘",
         "교통카드 잔액을 확인하거나 충전할 수 있는 기능으로 이동해요. "
@@ -812,7 +812,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
     UIElement(
         "korail_translate",
         "코레일",
-        (848, 80, 972, 165),
+        (862, 117, 946, 196),
         "icon",
         "번역 Aj 아이콘",
         "앱 언어를 다른 나라 말로 바꿀 수 있어요. "
@@ -821,7 +821,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
     UIElement(
         "korail_menu",
         "코레일",
-        (978, 80, 1060, 165),
+        (971, 112, 1054, 204),
         "icon",
         "메뉴 ≡ 아이콘",
         "앱의 모든 기능 목록을 볼 수 있어요. "
@@ -832,7 +832,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
     UIElement(
         "korail_roundtrip_check",
         "코레일",
-        (695, 215, 780, 265),
+        (685, 333, 768, 425),
         "button",
         "왕복 체크박스",
         "가는 편과 오는 편을 같이 예매할 수 있어요. "
@@ -841,7 +841,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
     UIElement(
         "korail_options_menu",
         "코레일",
-        (1028, 215, 1072, 265),
+        (885, 335, 958, 428),
         "icon",
         "⋮ 옵션 메뉴",
         "예매와 관련된 추가 옵션을 볼 수 있어요.",
@@ -849,7 +849,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
     UIElement(
         "korail_swap_stations",
         "코레일",
-        (425, 328, 658, 450),
+        (427, 560, 652, 783),
         "button",
         "출발·도착 교환 ⇄ 버튼",
         "출발역과 도착역을 서로 바꿔요. "
@@ -858,7 +858,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
     UIElement(
         "korail_departure_station",
         "코레일",
-        (20, 458, 435, 562),
+        (204, 560, 421, 798),
         "button",
         "출발역 선택 (용산)",
         "출발하는 역을 바꿀 수 있어요. "
@@ -867,7 +867,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
     UIElement(
         "korail_arrival_station",
         "코레일",
-        (638, 458, 1062, 562),
+        (669, 542, 875, 807),
         "button",
         "도착역 선택 (부산)",
         "도착하는 역을 바꿀 수 있어요. "
@@ -876,7 +876,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
     UIElement(
         "korail_date_select",
         "코레일",
-        (20, 578, 1062, 678),
+        (71, 878, 1015, 1092),
         "button",
         "가는날 선택",
         "기차 타는 날짜와 시간을 고를 수 있어요. "
@@ -885,7 +885,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
     UIElement(
         "korail_passenger_select",
         "코레일",
-        (20, 698, 1062, 782),
+        (62, 1092, 1017, 1324),
         "button",
         "인원 선택",
         "기차표를 몇 장 이상 살지 선택할 수 있어요. "
@@ -894,7 +894,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
     UIElement(
         "korail_quick_buy",
         "코레일",
-        (20, 798, 535, 892),
+        (52, 1320, 533, 1495),
         "button",
         "간편구매 버튼",
         "자주 타는 기차를 빠르게 예매할 수 있어요. "
@@ -903,7 +903,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
     UIElement(
         "korail_search_train",
         "코레일",
-        (540, 798, 1062, 892),
+        (538, 1320, 1040, 1495),
         "button",
         "이차조회 버튼",
         "선택한 날짜와 구간의 기차 시간표를 볼 수 있어요. "
@@ -914,7 +914,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
     UIElement(
         "korail_ktx_banner",
         "코레일",
-        (20, 902, 1062, 1058),
+        (46, 1533, 1036, 1715),
         "button",
         "KTX&SRT 연속열차이용 배너",
         "KTX와 SRT가 함께 이용하는 연속 서비스 안내에요. "
@@ -925,7 +925,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
     UIElement(
         "korail_service_navigation",
         "코레일",
-        (20, 1105, 270, 1275),
+        (115, 1883, 288, 2065),
         "icon",
         "길안내 서비스",
         "기차역까지 가는 방법을 안내해 줘요. "
@@ -934,7 +934,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
     UIElement(
         "korail_service_trainloc",
         "코레일",
-        (275, 1105, 540, 1275),
+        (322, 1882, 542, 2066),
         "icon",
         "이차위치 서비스",
         "내가 탈 기차가 지금 어디쯤 있는지 실시간으로 볼 수 있어요. "
@@ -943,7 +943,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
     UIElement(
         "korail_service_parking",
         "코레일",
-        (545, 1105, 808, 1275),
+        (562, 1878, 748, 2068),
         "icon",
         "주차 서비스",
         "기차역 주차장 이용 정보와 요금을 확인할 수 있어요. "
@@ -952,7 +952,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
     UIElement(
         "korail_service_airportbus",
         "코레일",
-        (812, 1105, 1062, 1275),
+        (775, 1885, 975, 2067),
         "icon",
         "공항버스 서비스",
         "공항으로 가는 버스 정보를 확인하고 예약할 수 있어요. "
@@ -963,7 +963,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
     UIElement(
         "korail_nav_home",
         "코레일",
-        (0, 2188, 270, 2340),
+        (62, 2107, 206, 2292),
         "tab",
         "홈 탭",
         "코레일 앱의 처음 화면으로 돌아가요. "
@@ -972,7 +972,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
     UIElement(
         "korail_nav_benefits",
         "코레일",
-        (270, 2188, 540, 2340),
+        (296, 2107, 532, 2292),
         "tab",
         "혜택·정기권 탭",
         "할인 혜택이나 자주 이용하는 구간을 정기권으로 구매할 수 있어요. "
@@ -981,7 +981,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
     UIElement(
         "korail_nav_travel",
         "코레일",
-        (540, 2188, 810, 2340),
+        (540, 2111, 821, 2290),
         "tab",
         "여행상품·패스 탭",
         "기차 여행 패키지나 레일패스를 구매할 수 있어요. "
@@ -990,7 +990,7 @@ KORAIL_ELEMENTS: list[UIElement] = [
     UIElement(
         "korail_nav_myticket",
         "코레일",
-        (810, 2188, 1080, 2340),
+        (844, 2117, 1048, 2308),
         "tab",
         "내티켓 탭",
         "내가 예매한 기차표를 확인하고 취소할 수 있어요. "
