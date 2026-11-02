@@ -23,7 +23,7 @@ from pipeline.hash_track import (
     to_str as phash_to_str,
 )
 from pipeline.fast_track import search as fast_search
-from pipeline.deep_track import analyze as deep_analyze
+from pipeline.deep_track import analyze as deep_analyze, is_valid_description
 
 # 앱 카테고리: 같은 카테고리 내 앱끼리 Stage 1/2 캐시를 공유합니다.
 # 지도 앱은 "길찾기" 버튼 등 동일한 UI·동작을 공유하므로 같은 그룹으로 묶습니다.
@@ -209,7 +209,7 @@ async def receive_capture(
         )
 
         # Gemini 실패 시 DB 저장 없이 에러 응답 반환
-        if description is None:
+        if not is_valid_description(description):  # 실패·중계 메시지·잘린 응답은 저장 금지
             err = {
                 "track": "error",
                 "description": "정보를 찾는 중입니다",
@@ -353,7 +353,7 @@ async def reanalyze() -> dict:
         full_image_bytes=_latest_full_image_bytes,
     )
 
-    if description is None:
+    if not is_valid_description(description):
         return {"ok": False, "error": "Gemini 분석 실패 — 잠시 후 다시 시도하세요."}
 
     collection = get_collection()

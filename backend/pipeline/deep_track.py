@@ -47,6 +47,31 @@ _APP_NAMES: dict[str, str] = {
 }
 
 
+FALLBACK_MESSAGE = "정보를 찾는 중입니다"
+
+
+def is_valid_description(text: str | None) -> bool:
+    """캐시에 저장해도 되는 완결된 설명인지 판정합니다.
+
+    중계 메시지("정보를 찾는 중입니다")나 잘린 응답이 캐시에 들어가면
+    이후 같은 UI를 탭할 때마다 그 문장이 정상 결과처럼 반환되므로 저장 전에 거릅니다.
+
+    Args:
+        text: 검사할 설명 문장.
+
+    Returns:
+        20자 이상이고 '.', '요', '다' 중 하나로 끝나며 중계 메시지가 아니면 True.
+    """
+    if not text:
+        return False
+    text = text.strip()
+    return (
+        text != FALLBACK_MESSAGE
+        and len(text) >= 20
+        and text[-1] in ".요다"
+    )
+
+
 def _get_client() -> genai.Client:
     global _client
     if _client is None:
@@ -120,7 +145,7 @@ def analyze(
             )
             text = response.text.strip()
             # 잘린 응답 판단: 너무 짧거나 문장이 마침표/요/다로 끝나지 않으면 재시도
-            if len(text) < 20 or not text[-1] in '.요다':
+            if not is_valid_description(text):
                 raise ValueError(f"응답이 불완전함: '{text}'")
             return text
         except Exception as e:
